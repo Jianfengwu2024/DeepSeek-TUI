@@ -652,6 +652,15 @@ pub fn switch_mode(app: &mut App, mode: crate::tui::app::AppMode) -> String {
     config::switch_mode(app, mode)
 }
 
+/// Persist a string key inside a named config table in `config.toml`.
+pub fn persist_table_string_key(
+    section: &str,
+    key: &str,
+    value: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    config::persist_table_string_key(section, key, value)
+}
+
 /// Auto-select a model based on request complexity.
 pub fn auto_model_heuristic(input: &str, current_model: &str) -> String {
     config::auto_model_heuristic(input, current_model)

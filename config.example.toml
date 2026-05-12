@@ -91,6 +91,17 @@ memory_path = "~/.deepseek/memory.md"
 # enabled = true            # turn the feature on (default: false)
 # Override the env-var equivalent: `DEEPSEEK_MEMORY=on`
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TriadMind host integration (optional governance layer)
+# ─────────────────────────────────────────────────────────────────────────────
+# Disabled by default so the core agent loop stays methodology-neutral.
+# Modes:
+#   "disabled"   - no TriadMind tools, no post-edit governance
+#   "tools_only" - expose triadmind_* tools, but do not run automatic checks
+#   "advisory"   - expose tools and run post-edit sync/verify diagnostics
+[triadmind]
+# mode = "disabled"
+
 # Parsed but currently unused (reserved for future versions):
 # tools_file = "./tools.json"
 

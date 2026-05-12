@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::abstraction_memory::AbstractionMemoryConfig;
+
 // ── Core Enums ──────────────────────────────────────────────────────
 
 /// Supported source languages for TriadMind analysis.
@@ -320,6 +322,19 @@ impl Default for RuntimeHealingConfig {
     }
 }
 
+/// Topology risk / stability anchor configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TopologyRiskConfig {
+    #[serde(rename = "matureStableNodeIds", default)]
+    pub mature_stable_node_ids: Vec<String>,
+    #[serde(rename = "matureStableNodePatterns", default)]
+    pub mature_stable_node_patterns: Vec<String>,
+    #[serde(rename = "matureStableSourcePaths", default)]
+    pub mature_stable_source_paths: Vec<String>,
+    #[serde(rename = "matureStableSourcePathPatterns", default)]
+    pub mature_stable_source_path_patterns: Vec<String>,
+}
+
 // ── Top-Level Config ────────────────────────────────────────────────
 
 /// Complete TriadMind configuration, deserialized from .triadmind/config.json.
@@ -336,6 +351,10 @@ pub struct TriadConfig {
     pub visualizer: TriadVisualizerConfig,
     #[serde(rename = "runtimeHealing", default)]
     pub runtime_healing: RuntimeHealingConfig,
+    #[serde(rename = "abstractionMemory", default)]
+    pub abstraction_memory: AbstractionMemoryConfig,
+    #[serde(rename = "topologyRisk", default)]
+    pub topology_risk: TopologyRiskConfig,
     #[serde(rename = "scanScopes", default)]
     pub scan_scopes: Vec<TriadScanScope>,
 }
@@ -357,6 +376,8 @@ impl Default for TriadConfig {
             parser: TriadParserConfig::default(),
             visualizer: TriadVisualizerConfig::default(),
             runtime_healing: RuntimeHealingConfig::default(),
+            abstraction_memory: AbstractionMemoryConfig::default(),
+            topology_risk: TopologyRiskConfig::default(),
             scan_scopes: vec![],
         }
     }
@@ -390,6 +411,7 @@ pub struct WorkspacePaths {
     pub healing_report_file: PathBuf,
     pub healing_prompt_file: PathBuf,
     pub runtime_error_file: PathBuf,
+    pub abstraction_memory_file: PathBuf,
     pub impact_map_file: PathBuf,
     pub impact_protocol_file: PathBuf,
     pub impact_prompt_file: PathBuf,
@@ -426,6 +448,7 @@ impl WorkspacePaths {
             healing_report_file: triad_dir.join("healing-report.json"),
             healing_prompt_file: triad_dir.join("healing-prompt.md"),
             runtime_error_file: triad_dir.join("runtime-error.log"),
+            abstraction_memory_file: triad_dir.join("abstraction-memory.json"),
             impact_map_file: triad_dir.join("impact-map.json"),
             impact_protocol_file: triad_dir.join("impact-protocol.json"),
             impact_prompt_file: triad_dir.join("impact-prompt.md"),
@@ -518,7 +541,7 @@ pub fn detect_project_language(project_root: &Path) -> TriadLanguage {
 }
 
 /// Path segments that TriadMind should always skip during project walks.
-const HARD_EXCLUDE_SEGMENTS: &[&str] = &[
+pub const HARD_EXCLUDE_SEGMENTS: &[&str] = &[
     "node_modules",
     ".git",
     ".triadmind",
@@ -669,6 +692,10 @@ mod tests {
             paths.config_file,
             PathBuf::from("/test/project/.triadmind/config.json")
         );
+        assert_eq!(
+            paths.abstraction_memory_file,
+            PathBuf::from("/test/project/.triadmind/abstraction-memory.json")
+        );
     }
 
     #[test]
@@ -677,6 +704,7 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let parsed: TriadConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.schema_version, "1.0");
+        assert!(parsed.abstraction_memory.enabled);
     }
 
     #[test]

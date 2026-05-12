@@ -405,6 +405,17 @@ If you are upgrading from older releases:
   [`MEMORY.md`](MEMORY.md) for the full feature surface (`# foo`
   composer prefix, `/memory` slash command, `remember` tool, opt-in
   toggle).
+- `triadmind.*` (optional): host-side TriadMind governance integration.
+  Default is opt-in and disabled.
+  - `[triadmind].mode = "disabled"`: do not register TriadMind tools and
+    do not run automatic post-edit governance.
+  - `[triadmind].mode = "tools_only"`: register `triadmind_*` tools in
+    agent modes, but keep the edit loop free of automatic governance.
+  - `[triadmind].mode = "advisory"`: register `triadmind_*` tools in
+    agent modes and run post-edit sync/verify diagnostics after successful
+    source-file edits.
+  - Plan mode stays read-only even when TriadMind is enabled; the
+    `triadmind_*` tools are intentionally hidden there.
 - `snapshots.*` (optional): side-git workspace snapshots for file rollback:
   - `[snapshots].enabled` (bool, default `true`)
   - `[snapshots].max_age_days` (int, default `7`)
@@ -508,6 +519,28 @@ Notes:
   see the `remember` tool.
 - See [`MEMORY.md`](MEMORY.md) for examples and the full `/memory`
   command surface.
+
+### TriadMind host integration
+
+TriadMind is available as an optional host-side governance layer. The
+default is off so DeepSeek-TUI does not force one methodology into the
+core loop unless a user or project explicitly opts in.
+
+```toml
+[triadmind]
+mode = "tools_only"  # disabled | tools_only | advisory
+```
+
+Notes:
+
+- `disabled`: hides `triadmind_sync`, `triadmind_verify`, and
+  `triadmind_rules`, and skips all post-edit governance work.
+- `tools_only`: exposes the TriadMind tools in agent modes, but leaves
+  file-edit turns unchanged.
+- `advisory`: exposes the tools and runs post-edit sync/verify
+  diagnostics after successful source edits.
+- Plan mode remains read-only even when TriadMind is enabled, so these
+  tools are not surfaced there.
 
 ### Notifications
 

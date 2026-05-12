@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::config::TriadMindMode;
+use crate::core::engine::plugin_metadata::{PluginDefaultState, PluginStability};
 use crate::models::SystemBlock;
 use crate::test_support::lock_test_env;
 use crate::tools::spec::ToolCapability;
@@ -560,6 +562,168 @@ fn turn_tool_registry_builder_keeps_plan_mode_read_only_for_files() {
         write_or_exec_tools.is_empty(),
         "Plan mode must not register file-writing or code-execution tools: {write_or_exec_tools:?}"
     );
+}
+
+#[test]
+fn triadmind_mode_defaults_to_disabled() {
+    assert_eq!(Config::default().triadmind_mode(), TriadMindMode::Disabled);
+    assert!(!TriadMindMode::Disabled.tools_enabled());
+    assert!(!TriadMindMode::Disabled.post_edit_enabled());
+    assert!(TriadMindMode::ToolsOnly.tools_enabled());
+    assert!(!TriadMindMode::ToolsOnly.post_edit_enabled());
+    assert!(TriadMindMode::Advisory.tools_enabled());
+    assert!(TriadMindMode::Advisory.post_edit_enabled());
+}
+
+#[test]
+fn engine_defaults_to_no_governance_plugins() {
+    let (engine, _handle) = Engine::new(EngineConfig::default(), &Config::default());
+    assert!(engine.post_edit_governance_plugins.is_empty());
+}
+
+#[test]
+fn tool_plugin_registry_contains_triadmind_factory() {
+    let names: Vec<&str> = super::tool_plugins::tool_plugin_registry()
+        .iter()
+        .map(|factory| factory.metadata.id)
+        .collect();
+    assert!(names.contains(&"triadmind_tools"));
+}
+
+#[test]
+fn triadmind_tool_plugin_predicate_tracks_mode_and_config() {
+    let disabled = EngineConfig::default();
+    let enabled = EngineConfig {
+        triadmind_mode: TriadMindMode::ToolsOnly,
+        ..EngineConfig::default()
+    };
+    let factory = super::tool_plugins::tool_plugin_registry()
+        .iter()
+        .find(|factory| factory.metadata.id == "triadmind_tools")
+        .expect("triadmind tool plugin factory");
+
+    assert!(!(factory.enabled)(&disabled, AppMode::Agent));
+    assert!(!(factory.enabled)(&enabled, AppMode::Plan));
+    assert!((factory.enabled)(&enabled, AppMode::Agent));
+}
+
+#[test]
+fn governance_registry_contains_triadmind_factory() {
+    let names: Vec<&str> = super::governance::post_edit_governance_registry()
+        .iter()
+        .map(|factory| factory.metadata.id)
+        .collect();
+    assert!(names.contains(&"triadmind"));
+}
+
+#[test]
+fn tool_plugin_metadata_is_stable_and_documented() {
+    let factory = super::tool_plugins::tool_plugin_registry()
+        .iter()
+        .find(|factory| factory.metadata.id == "triadmind_tools")
+        .expect("triadmind tool plugin factory");
+
+    assert_eq!(
+        factory.metadata.description,
+        "TriadMind tool bundle: sync, verify, and rules management."
+    );
+    assert_eq!(factory.metadata.stability, PluginStability::Experimental);
+    assert_eq!(factory.metadata.default_state, PluginDefaultState::Disabled);
+}
+
+#[test]
+fn governance_plugin_metadata_is_stable_and_documented() {
+    let factory = super::governance::post_edit_governance_registry()
+        .iter()
+        .find(|factory| factory.metadata.id == "triadmind")
+        .expect("triadmind governance plugin factory");
+
+    assert_eq!(
+        factory.metadata.description,
+        "TriadMind architecture governance advisories after successful source edits."
+    );
+    assert_eq!(factory.metadata.stability, PluginStability::Experimental);
+    assert_eq!(factory.metadata.default_state, PluginDefaultState::Disabled);
+}
+
+#[test]
+fn advisory_mode_registers_triadmind_governance_plugin() {
+    let config = EngineConfig {
+        triadmind_mode: TriadMindMode::Advisory,
+        ..EngineConfig::default()
+    };
+    let (engine, _handle) = Engine::new(config, &Config::default());
+
+    assert_eq!(engine.post_edit_governance_plugins.len(), 1);
+    assert_eq!(engine.post_edit_governance_plugins[0].name(), "triadmind");
+}
+
+#[test]
+fn triadmind_governance_factory_tracks_mode() {
+    let disabled = EngineConfig::default();
+    let advisory = EngineConfig {
+        triadmind_mode: TriadMindMode::Advisory,
+        ..EngineConfig::default()
+    };
+
+    assert!(super::triadmind_hooks::build_triadmind_governance_plugin(&disabled).is_none());
+    assert!(super::triadmind_hooks::build_triadmind_governance_plugin(&advisory).is_some());
+}
+
+#[test]
+fn turn_tool_registry_omits_triadmind_tools_when_disabled() {
+    let (engine, _handle) = Engine::new(EngineConfig::default(), &Config::default());
+    let registry = engine
+        .build_turn_tool_registry_builder(
+            AppMode::Agent,
+            engine.config.todos.clone(),
+            engine.config.plan_state.clone(),
+        )
+        .build(engine.build_tool_context(AppMode::Agent, false));
+
+    assert!(!registry.contains("triadmind_sync"));
+    assert!(!registry.contains("triadmind_verify"));
+    assert!(!registry.contains("triadmind_rules"));
+}
+
+#[test]
+fn turn_tool_registry_registers_triadmind_tools_when_enabled() {
+    let config = EngineConfig {
+        triadmind_mode: TriadMindMode::ToolsOnly,
+        ..EngineConfig::default()
+    };
+    let (engine, _handle) = Engine::new(config, &Config::default());
+    let registry = engine
+        .build_turn_tool_registry_builder(
+            AppMode::Agent,
+            engine.config.todos.clone(),
+            engine.config.plan_state.clone(),
+        )
+        .build(engine.build_tool_context(AppMode::Agent, false));
+
+    assert!(registry.contains("triadmind_sync"));
+    assert!(registry.contains("triadmind_verify"));
+    assert!(registry.contains("triadmind_rules"));
+}
+
+#[test]
+fn plan_mode_keeps_triadmind_tools_hidden_even_when_enabled() {
+    let config = EngineConfig {
+        triadmind_mode: TriadMindMode::Advisory,
+        ..EngineConfig::default()
+    };
+    let (engine, _handle) = Engine::new(config, &Config::default());
+    let registry = engine
+        .build_turn_tool_registry_builder(
+            AppMode::Plan,
+            engine.config.todos.clone(),
+            engine.config.plan_state.clone(),
+        )
+        .build(engine.build_tool_context(AppMode::Plan, false));
+
+    assert!(!registry.contains("triadmind_sync"));
+    assert!(!registry.contains("triadmind_verify"));
+    assert!(!registry.contains("triadmind_rules"));
 }
 
 #[test]

@@ -25,7 +25,9 @@ use crate::client::DeepSeekClient;
 use crate::compaction::{
     CompactionConfig, compact_messages_safe, merge_system_prompts, should_compact,
 };
-use crate::config::{ApiProvider, Config, DEFAULT_MAX_SUBAGENTS, DEFAULT_TEXT_MODEL};
+use crate::config::{
+    ApiProvider, Config, TriadMindMode, DEFAULT_MAX_SUBAGENTS, DEFAULT_TEXT_MODEL,
+};
 use crate::cycle_manager::{
     CycleBriefing, CycleConfig, StructuredState, archive_cycle, build_seed_messages,
     estimate_briefing_tokens, produce_briefing, should_advance_cycle,
@@ -152,6 +154,9 @@ pub struct EngineConfig {
     /// When true, force `tool_choice: "required"` and opt compatible function
     /// schemas into DeepSeek beta strict mode.
     pub strict_tool_mode: bool,
+    /// TriadMind host integration mode. Defaults to disabled so architecture
+    /// governance is opt-in at the host boundary.
+    pub triadmind_mode: TriadMindMode,
     /// Workshop / large-tool-output routing (#548). `None` disables routing.
     pub workshop: Option<crate::tools::large_output_router::WorkshopConfig>,
 }
@@ -185,6 +190,7 @@ impl Default for EngineConfig {
             memory_enabled: false,
             memory_path: PathBuf::from("./memory.md"),
             strict_tool_mode: false,
+            triadmind_mode: TriadMindMode::Disabled,
             goal_objective: None,
             locale_tag: "en".to_string(),
             workshop: None,
@@ -345,8 +351,10 @@ pub struct Engine {
     /// Diagnostics collected during the current step's tool calls. Drained
     /// and forwarded as a synthetic user message before the next API call.
     pending_lsp_blocks: Vec<crate::lsp::DiagnosticBlock>,
-    /// TriadMind architecture diagnostics collected during tool calls.
-    pending_triadmind_messages: Vec<String>,
+    /// Optional post-edit governance plugins enabled for this engine.
+    post_edit_governance_plugins: Vec<std::sync::Arc<dyn self::governance::PostEditGovernancePlugin>>,
+    /// Governance advisories collected during tool calls.
+    pending_governance_messages: Vec<String>,
 }
 
 // === Internal tool helpers ===
@@ -529,6 +537,9 @@ impl Engine {
             })
             .map(std::sync::Arc::from);
 
+        let post_edit_governance_plugins =
+            self::governance::build_post_edit_governance_plugins(&config);
+
         let mut engine = Engine {
             config,
             deepseek_client,
@@ -554,7 +565,8 @@ impl Engine {
             turn_counter: 0,
             lsp_manager,
             pending_lsp_blocks: Vec::new(),
-            pending_triadmind_messages: Vec::new(),
+            post_edit_governance_plugins,
+            pending_governance_messages: Vec::new(),
             workshop_vars,
             sandbox_backend,
         };
@@ -2021,12 +2033,15 @@ use context::{
     is_context_length_error_message, summarize_text, turn_response_headroom_tokens,
 };
 mod dispatch;
+pub(crate) mod governance;
 mod loop_guard;
 mod lsp_hooks;
+pub(crate) mod plugin_metadata;
 mod triadmind_hooks;
 mod streaming;
 mod tool_catalog;
 mod tool_execution;
+pub(crate) mod tool_plugins;
 mod tool_setup;
 mod turn_loop;
 

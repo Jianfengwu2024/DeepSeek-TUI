@@ -1873,6 +1873,54 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         println!("    Run `deepseek mcp init` or `deepseek setup --mcp`.");
     }
 
+    println!();
+    println!("{}", "Host Plugins:".bold());
+    let doctor_engine_config = doctor_engine_plugin_config(config);
+    for factory in crate::core::engine::tool_plugins::tool_plugin_registry() {
+        let enabled_in_agent =
+            (factory.enabled)(&doctor_engine_config, crate::tui::app::AppMode::Agent);
+        let enabled_in_plan =
+            (factory.enabled)(&doctor_engine_config, crate::tui::app::AppMode::Plan);
+        let enabled_in_yolo =
+            (factory.enabled)(&doctor_engine_config, crate::tui::app::AppMode::Yolo);
+        let icon = if enabled_in_agent || enabled_in_yolo {
+            "鉁?".truecolor(aqua_r, aqua_g, aqua_b)
+        } else {
+            "!".truecolor(sky_r, sky_g, sky_b)
+        };
+        println!(
+            "  {} tool {} [{}; default={}]",
+            icon,
+            factory.metadata.id,
+            doctor_plugin_stability_label(factory.metadata.stability),
+            doctor_plugin_default_state_label(factory.metadata.default_state)
+        );
+        println!("    {}", factory.metadata.description);
+        println!(
+            "    enabled: agent={}, yolo={}, plan={}",
+            if enabled_in_agent { "yes" } else { "no" },
+            if enabled_in_yolo { "yes" } else { "no" },
+            if enabled_in_plan { "yes" } else { "no" }
+        );
+    }
+    for factory in crate::core::engine::governance::post_edit_governance_registry() {
+        let enabled = (factory.build)(&doctor_engine_config).is_some();
+        let icon = if enabled {
+            "鉁?".truecolor(aqua_r, aqua_g, aqua_b)
+        } else {
+            "!".truecolor(sky_r, sky_g, sky_b)
+        };
+        println!(
+            "  {} governance {} [{}; default={}]",
+            icon,
+            factory.metadata.id,
+            doctor_plugin_stability_label(factory.metadata.stability),
+            doctor_plugin_default_state_label(factory.metadata.default_state)
+        );
+        println!("    {}", factory.metadata.description);
+        println!("    enabled: {}", if enabled { "yes" } else { "no" });
+    }
+
     // Skills configuration
     println!();
     println!("{}", "Skills:".bold());
@@ -2250,6 +2298,7 @@ fn run_doctor_json(
     });
     let api_target = doctor_api_target(config);
     let strict_tool_mode = doctor_strict_tool_mode_status(config);
+    let host_plugins = doctor_host_plugins_report(config);
 
     let report = json!({
         "version": env!("CARGO_PKG_VERSION"),
@@ -2268,6 +2317,7 @@ fn run_doctor_json(
             "message": strict_tool_mode.message,
             "recommended_base_url": strict_tool_mode.recommended_base_url,
         },
+        "host_plugins": host_plugins,
         "memory": memory_summary,
         "mcp": mcp_summary,
         "skills": {
@@ -2372,6 +2422,73 @@ fn provider_capability_report(config: &Config) -> serde_json::Value {
         "cache_telemetry_supported": cap.cache_telemetry_supported,
         "request_payload_mode": serde_json::to_value(cap.request_payload_mode).unwrap_or_default(),
         "alias_deprecation": cap.alias_deprecation,
+    })
+}
+
+fn doctor_engine_plugin_config(config: &Config) -> crate::core::engine::EngineConfig {
+    crate::core::engine::EngineConfig {
+        triadmind_mode: config.triadmind_mode(),
+        ..crate::core::engine::EngineConfig::default()
+    }
+}
+
+fn doctor_plugin_stability_label(
+    stability: crate::core::engine::plugin_metadata::PluginStability,
+) -> &'static str {
+    match stability {
+        crate::core::engine::plugin_metadata::PluginStability::Experimental => "experimental",
+        crate::core::engine::plugin_metadata::PluginStability::Stable => "stable",
+    }
+}
+
+fn doctor_plugin_default_state_label(
+    default_state: crate::core::engine::plugin_metadata::PluginDefaultState,
+) -> &'static str {
+    match default_state {
+        crate::core::engine::plugin_metadata::PluginDefaultState::Disabled => "disabled",
+        crate::core::engine::plugin_metadata::PluginDefaultState::Enabled => "enabled",
+    }
+}
+
+fn doctor_host_plugins_report(config: &Config) -> serde_json::Value {
+    use serde_json::json;
+
+    let engine_config = doctor_engine_plugin_config(config);
+    let tool_plugins: Vec<serde_json::Value> =
+        crate::core::engine::tool_plugins::tool_plugin_registry()
+            .iter()
+            .map(|factory| {
+                json!({
+                    "id": factory.metadata.id,
+                    "description": factory.metadata.description,
+                    "stability": doctor_plugin_stability_label(factory.metadata.stability),
+                    "default_state": doctor_plugin_default_state_label(factory.metadata.default_state),
+                    "enabled_in": {
+                        "agent": (factory.enabled)(&engine_config, crate::tui::app::AppMode::Agent),
+                        "yolo": (factory.enabled)(&engine_config, crate::tui::app::AppMode::Yolo),
+                        "plan": (factory.enabled)(&engine_config, crate::tui::app::AppMode::Plan),
+                    }
+                })
+            })
+            .collect();
+
+    let governance_plugins: Vec<serde_json::Value> =
+        crate::core::engine::governance::post_edit_governance_registry()
+            .iter()
+            .map(|factory| {
+                json!({
+                    "id": factory.metadata.id,
+                    "description": factory.metadata.description,
+                    "stability": doctor_plugin_stability_label(factory.metadata.stability),
+                    "default_state": doctor_plugin_default_state_label(factory.metadata.default_state),
+                    "enabled": (factory.build)(&engine_config).is_some(),
+                })
+            })
+            .collect();
+
+    json!({
+        "tool_plugins": tool_plugins,
+        "governance_plugins": governance_plugins,
     })
 }
 
@@ -4227,6 +4344,7 @@ async fn run_exec_agent(
         memory_enabled: config.memory_enabled(),
         memory_path: config.memory_path(),
         strict_tool_mode: config.strict_tool_mode.unwrap_or(false),
+        triadmind_mode: config.triadmind_mode(),
         goal_objective: None,
         locale_tag: crate::localization::resolve_locale(
             &crate::settings::Settings::load().unwrap_or_default().locale,
@@ -4523,6 +4641,39 @@ mod doctor_endpoint_tests {
         assert_eq!(status.status, "custom_endpoint");
         assert!(status.function_strict_sent);
         assert!(status.message.contains("custom endpoint"));
+    }
+
+    #[test]
+    fn doctor_host_plugins_report_includes_triadmind_entries() {
+        let config = Config {
+            triadmind: Some(crate::config::TriadMindConfig {
+                mode: Some(crate::config::TriadMindMode::Advisory),
+            }),
+            ..Default::default()
+        };
+
+        let report = doctor_host_plugins_report(&config);
+        let tool_plugins = report["tool_plugins"].as_array().expect("tool plugin array");
+        let governance_plugins = report["governance_plugins"]
+            .as_array()
+            .expect("governance plugin array");
+
+        let tool = tool_plugins
+            .iter()
+            .find(|plugin| plugin["id"] == "triadmind_tools")
+            .expect("triadmind tool plugin");
+        assert_eq!(tool["stability"], "experimental");
+        assert_eq!(tool["default_state"], "disabled");
+        assert_eq!(tool["enabled_in"]["agent"], true);
+        assert_eq!(tool["enabled_in"]["plan"], false);
+
+        let governance = governance_plugins
+            .iter()
+            .find(|plugin| plugin["id"] == "triadmind")
+            .expect("triadmind governance plugin");
+        assert_eq!(governance["stability"], "experimental");
+        assert_eq!(governance["default_state"], "disabled");
+        assert_eq!(governance["enabled"], true);
     }
 
     #[test]

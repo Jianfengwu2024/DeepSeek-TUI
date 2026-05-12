@@ -581,6 +581,7 @@ fn build_engine_config(app: &App, config: &Config) -> EngineConfig {
         memory_enabled: config.memory_enabled(),
         memory_path: config.memory_path(),
         strict_tool_mode: config.strict_tool_mode.unwrap_or(false),
+        triadmind_mode: config.triadmind_mode(),
         goal_objective: app.goal.goal_objective.clone(),
         locale_tag: app.ui_locale.tag().to_string(),
         workshop: config.workshop.clone(),

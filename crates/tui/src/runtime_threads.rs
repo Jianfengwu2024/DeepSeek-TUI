@@ -1958,6 +1958,7 @@ impl RuntimeThreadManager {
             memory_enabled: self.config.memory_enabled(),
             memory_path: self.config.memory_path(),
             strict_tool_mode: self.config.strict_tool_mode.unwrap_or(false),
+            triadmind_mode: self.config.triadmind_mode(),
             goal_objective: None,
             locale_tag: crate::localization::resolve_locale(
                 &crate::settings::Settings::load().unwrap_or_default().locale,

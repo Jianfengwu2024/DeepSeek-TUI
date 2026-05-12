@@ -1,20 +1,14 @@
-//! # TriadMind Hooks — Architecture governance integration for the agent engine
+//! TriadMind post-edit governance plugin.
 //!
-//! Post-edit hooks that run TriadMind sync + verify after every file modification,
-//! following the same pattern as `lsp_hooks.rs`.
-//!
-//! When the agent edits a source file (via `edit_file`, `apply_patch`, or `write_file`),
-//! this hook:
-//! 1. Checks if the edited file is a recognized source file (`is_source_file`)
-//! 2. Runs `sync_triad_map` to detect changes
-//! 3. If changes detected, runs `run_topology_verify`
-//! 4. If verify fails, queues diagnostic messages for the model's next request
-//!
-//! @See: `lsp_hooks.rs` for the integration pattern this module follows.
+//! This module owns TriadMind-specific file filtering, sync/verify logic, and
+//! diagnostic formatting. The engine only sees it through the generic
+//! post-edit governance plugin interface from `governance.rs`.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use super::*;
+use async_trait::async_trait;
+use crate::core::engine::EngineConfig;
 
 /// Check whether a tool call edited files that are source files warranting
 /// TriadMind sync. Reuses the LSP hook's path extraction logic.
@@ -23,7 +17,6 @@ pub(super) fn triadmind_relevant_paths(
     tool_input: &serde_json::Value,
     workspace_root: &PathBuf,
 ) -> Vec<PathBuf> {
-    // Reuse the path extraction from lsp_hooks — same tools, same paths.
     let all_paths = super::lsp_hooks::edited_paths_for_tool(tool_name, tool_input);
     all_paths
         .into_iter()
@@ -43,89 +36,84 @@ pub(super) fn triadmind_relevant_paths(
         .collect()
 }
 
-impl Engine {
-    /// Post-edit TriadMind hook. After a successful file edit, runs sync + verify
-    /// on the project's triad map. Diagnostic messages are queued via
-    /// `pending_triadmind_messages` and flushed before the next API request.
-    pub(super) async fn run_post_edit_triadmind_hook(
-        &mut self,
+pub(super) struct TriadMindGovernancePlugin;
+
+pub(super) fn build_triadmind_governance_plugin(
+    config: &EngineConfig,
+) -> Option<Arc<dyn super::governance::PostEditGovernancePlugin>> {
+    if config.triadmind_mode.post_edit_enabled() {
+        Some(Arc::new(TriadMindGovernancePlugin))
+    } else {
+        None
+    }
+}
+
+#[async_trait]
+impl super::governance::PostEditGovernancePlugin for TriadMindGovernancePlugin {
+    fn name(&self) -> &'static str {
+        "triadmind"
+    }
+
+    async fn on_successful_edit(
+        &self,
+        workspace_root: &std::path::Path,
         tool_name: &str,
         tool_input: &serde_json::Value,
-    ) {
-        // ── Guard: check config ────────────────────────────────────
-        // TriadMind is enabled by default; can be disabled via config
-        // TODO: read from user config when triadmind settings are available
-        let triadmind_enabled = true; // Enable for now
-        if !triadmind_enabled {
-            return;
-        }
-
-        // ── Extract relevant paths ────────────────────────────────
-        let workspace = self.session.workspace.clone();
-        let source_paths =
-            triadmind_relevant_paths(tool_name, tool_input, &workspace);
-
+    ) -> Vec<String> {
+        let workspace = workspace_root.to_path_buf();
+        let source_paths = triadmind_relevant_paths(tool_name, tool_input, &workspace);
         if source_paths.is_empty() {
-            return;
+            return Vec::new();
         }
 
-        // ── Run sync ──────────────────────────────────────────────
         let paths = deepseek_triadmind::config::WorkspacePaths::new(&workspace);
         match deepseek_triadmind::sync::sync_triad_map(&paths, false) {
             Ok(sync_result) => {
                 if !sync_result.changed {
-                    return;
+                    return Vec::new();
                 }
 
-                // ── Run verify if changed ─────────────────────────
                 let map_path = paths.map_file;
-                if map_path.exists() {
-                    match std::fs::read_to_string(&map_path) {
-                        Ok(content) => {
-                            let trimmed = content.trim().trim_start_matches('\u{FEFF}');
-                            if let Ok(nodes) = serde_json::from_str::<
-                                Vec<deepseek_triadmind::protocol::TriadNodeDefinition>,
-                            >(trimmed)
-                            {
-                                let report = deepseek_triadmind::verify::run_topology_verify(
-                                    &map_path.to_string_lossy(),
-                                    &workspace.to_string_lossy(),
-                                    &nodes,
-                                    &Default::default(),
-                                );
-                                if !report.passed {
-                                    let msg = format_triadmind_diagnostic(&report);
-                                    self.pending_triadmind_messages.push(msg);
-                                }
+                if !map_path.exists() {
+                    return Vec::new();
+                }
+
+                match std::fs::read_to_string(&map_path) {
+                    Ok(content) => {
+                        let trimmed = content.trim().trim_start_matches('\u{FEFF}');
+                        if let Ok(nodes) = serde_json::from_str::<
+                            Vec<deepseek_triadmind::protocol::TriadNodeDefinition>,
+                        >(trimmed)
+                        {
+                            let report = deepseek_triadmind::verify::run_topology_verify(
+                                &map_path.to_string_lossy(),
+                                &workspace.to_string_lossy(),
+                                &nodes,
+                                &Default::default(),
+                            );
+                            if !report.passed {
+                                return vec![format_triadmind_diagnostic(&report)];
                             }
                         }
-                        Err(_e) => {
-                            // Map file read error — skip silently
-                        }
+                    }
+                    Err(_e) => {
+                        // Map file read error - skip silently.
                     }
                 }
             }
             Err(_e) => {
-                // Sync error — skip silently
+                // Sync error - skip silently.
             }
         }
-    }
 
-    /// Drain pending TriadMind diagnostic messages into the session message stream,
-    /// so the model sees architecture warnings on its next request.
-    pub(super) async fn flush_pending_triadmind_diagnostics(&mut self) {
-        let messages = std::mem::take(&mut self.pending_triadmind_messages);
-        for msg in messages {
-            self.add_session_message(self.user_text_message_with_turn_metadata(msg))
-                .await;
-        }
+        Vec::new()
     }
 }
 
 /// Format a verify report into a human-readable diagnostic message for the model.
 fn format_triadmind_diagnostic(report: &deepseek_triadmind::verify::VerifyReport) -> String {
     let mut lines = vec![
-        "── TriadMind Architecture Check ──".to_string(),
+        "TriadMind Architecture Check".to_string(),
         format!(
             "  Nodes: {} | Execute-like: {:.1}% | Ghost: {:.1}% | Empty: {}",
             report.metrics.triad_nodes,
@@ -135,7 +123,6 @@ fn format_triadmind_diagnostic(report: &deepseek_triadmind::verify::VerifyReport
         ),
     ];
 
-    // Add failing checks
     let failures: Vec<_> = report.checks.iter().filter(|c| c.status == "fail").collect();
     if !failures.is_empty() {
         lines.push(String::new());
@@ -159,6 +146,7 @@ fn format_triadmind_diagnostic(report: &deepseek_triadmind::verify::VerifyReport
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::engine::governance;
     use deepseek_triadmind::verify::{
         VerifyCheckResult, VerifyMetrics, VerifyReport, VerifyThresholds,
     };
@@ -180,8 +168,6 @@ mod tests {
             &serde_json::json!({"path": "src/main.rs"}),
             &PathBuf::from("/project"),
         );
-        // In test context, the path passes through and is_source_file
-        // on "src/main.rs" returns true.
         assert!(!paths.is_empty());
     }
 
@@ -247,5 +233,14 @@ mod tests {
         let msg = format_triadmind_diagnostic(&report);
         assert!(msg.contains("TriadMind Architecture Check"));
         assert!(!msg.contains("Issues:"));
+    }
+
+    #[tokio::test]
+    async fn plugin_reports_stable_name() {
+        let plugin = TriadMindGovernancePlugin;
+        assert_eq!(
+            <TriadMindGovernancePlugin as governance::PostEditGovernancePlugin>::name(&plugin),
+            "triadmind"
+        );
     }
 }

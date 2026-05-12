@@ -491,6 +491,41 @@ pub struct MemoryConfig {
     pub enabled: Option<bool>,
 }
 
+/// TriadMind host integration mode.
+///
+/// This keeps architecture governance opt-in at the DeepSeek-TUI host layer:
+/// - `disabled`: no TriadMind tools, no post-edit governance
+/// - `tools_only`: expose TriadMind tools, but do not run automatic checks
+/// - `advisory`: expose tools and run post-edit sync/verify diagnostics
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TriadMindMode {
+    #[default]
+    Disabled,
+    ToolsOnly,
+    Advisory,
+}
+
+impl TriadMindMode {
+    #[must_use]
+    pub fn tools_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    #[must_use]
+    pub fn post_edit_enabled(self) -> bool {
+        matches!(self, Self::Advisory)
+    }
+}
+
+/// Optional TriadMind host configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct TriadMindConfig {
+    /// Host integration mode for the governance layer.
+    #[serde(default)]
+    pub mode: Option<TriadMindMode>,
+}
+
 impl SnapshotsConfig {
     #[must_use]
     pub fn max_age(&self) -> std::time::Duration {
@@ -831,6 +866,12 @@ pub struct Config {
     /// `DEEPSEEK_MEMORY=on` is set.
     #[serde(default)]
     pub memory: Option<MemoryConfig>,
+
+    /// Optional TriadMind governance host integration. Defaults to disabled
+    /// so the core agent loop stays methodology-neutral unless explicitly
+    /// opted in by the user or project.
+    #[serde(default)]
+    pub triadmind: Option<TriadMindConfig>,
 
     /// Post-edit LSP diagnostics injection (#136). When absent, the engine
     /// applies the defaults documented in [`LspConfigToml`].
@@ -1545,6 +1586,16 @@ impl Config {
             .as_ref()
             .and_then(|m| m.enabled)
             .unwrap_or(false)
+    }
+
+    /// TriadMind host integration mode. Defaults to `disabled` so the
+    /// governance layer is opt-in at the host boundary.
+    #[must_use]
+    pub fn triadmind_mode(&self) -> TriadMindMode {
+        self.triadmind
+            .as_ref()
+            .and_then(|cfg| cfg.mode)
+            .unwrap_or_default()
     }
 
     #[must_use]
@@ -2544,6 +2595,7 @@ fn merge_config(base: Config, override_cfg: Config) -> Config {
         skills: override_cfg.skills.or(base.skills),
         snapshots: override_cfg.snapshots.or(base.snapshots),
         memory: override_cfg.memory.or(base.memory),
+        triadmind: merge_triadmind(base.triadmind, override_cfg.triadmind),
         lsp: override_cfg.lsp.or(base.lsp),
         context: ContextConfig {
             enabled: override_cfg.context.enabled.or(base.context.enabled),
@@ -2577,6 +2629,20 @@ fn merge_config(base: Config, override_cfg: Config) -> Config {
         strict_tool_mode: override_cfg.strict_tool_mode.or(base.strict_tool_mode),
         runtime_api: override_cfg.runtime_api.or(base.runtime_api),
         workshop: override_cfg.workshop.or(base.workshop),
+    }
+}
+
+fn merge_triadmind(
+    base: Option<TriadMindConfig>,
+    override_cfg: Option<TriadMindConfig>,
+) -> Option<TriadMindConfig> {
+    match (base, override_cfg) {
+        (Some(base), Some(override_cfg)) => Some(TriadMindConfig {
+            mode: override_cfg.mode.or(base.mode),
+        }),
+        (None, Some(override_cfg)) => Some(override_cfg),
+        (Some(base), None) => Some(base),
+        (None, None) => None,
     }
 }
 
@@ -5659,5 +5725,43 @@ model = "deepseek-ai/deepseek-v4-pro"
         let json = serde_json::to_value(&cap).unwrap();
         let deserialized: ProviderCapability = serde_json::from_value(json).unwrap();
         assert_eq!(cap, deserialized);
+    }
+
+    #[test]
+    fn triadmind_mode_defaults_to_disabled() {
+        let config = Config::default();
+        assert_eq!(config.triadmind_mode(), TriadMindMode::Disabled);
+    }
+
+    #[test]
+    fn triadmind_mode_deserializes_from_table() {
+        let config: Config = toml::from_str(
+            r#"
+[triadmind]
+mode = "advisory"
+"#,
+        )
+        .expect("parse triadmind config");
+
+        assert_eq!(config.triadmind_mode(), TriadMindMode::Advisory);
+    }
+
+    #[test]
+    fn merge_config_prefers_override_triadmind_mode() {
+        let base = Config {
+            triadmind: Some(TriadMindConfig {
+                mode: Some(TriadMindMode::ToolsOnly),
+            }),
+            ..Config::default()
+        };
+        let override_cfg = Config {
+            triadmind: Some(TriadMindConfig {
+                mode: Some(TriadMindMode::Advisory),
+            }),
+            ..Config::default()
+        };
+
+        let merged = merge_config(base, override_cfg);
+        assert_eq!(merged.triadmind_mode(), TriadMindMode::Advisory);
     }
 }

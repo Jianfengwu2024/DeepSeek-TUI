@@ -63,6 +63,7 @@ project_overhaul_prompt.md
 
 # Local runtime state
 .deepseek/
+.triadmind/
 **/session_*.json
 *.db
 

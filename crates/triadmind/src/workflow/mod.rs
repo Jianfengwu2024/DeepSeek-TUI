@@ -11,10 +11,15 @@
 //! @LeftBranch: write_prompt_packet, build_macro_prompt, build_implementation_prompt
 //! @RightBranch: WorkflowPaths, PromptPacket
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::abstraction_memory::{
+    build_prompt_context, ensure_abstraction_memory, render_prompt_context, RecommendationInput,
+};
+use crate::config::{load_triad_config, WorkspacePaths};
 use crate::protocol::{TriadNodeDefinition, UpgradeProtocol};
 
 // ── Workflow Paths ──────────────────────────────────────────────────
@@ -121,13 +126,22 @@ pub fn write_prompt_packet(
     )?;
 
     // Build prompts
-    let protocol_prompt = build_protocol_prompt(paths, normalized_demand, existing_nodes);
-    let implementation_prompt = build_implementation_prompt(paths, normalized_demand, existing_nodes);
+    let mut protocol_prompt = build_protocol_prompt(paths, normalized_demand, existing_nodes);
+    let mut implementation_prompt = build_implementation_prompt(paths, normalized_demand, existing_nodes);
     let pipeline_prompt = build_pipeline_prompt(paths, normalized_demand);
     let macro_prompt = build_macro_prompt(paths, normalized_demand, existing_nodes);
     let meso_prompt = build_meso_prompt(paths, normalized_demand, existing_nodes);
     let micro_prompt = build_micro_prompt(paths, normalized_demand, existing_nodes);
-    let master_prompt = build_master_prompt(paths);
+    let mut master_prompt = build_master_prompt(paths);
+
+    if let Some(section) = build_abstraction_memory_section(&paths.project_root, normalized_demand)? {
+        protocol_prompt.push_str("\n\n");
+        protocol_prompt.push_str(&section);
+        implementation_prompt.push_str("\n\n");
+        implementation_prompt.push_str(&section);
+        master_prompt.push_str("\n\n");
+        master_prompt.push_str(&section);
+    }
 
     // Write all prompt files
     std::fs::write(&paths.prompt_file, &protocol_prompt)?;
@@ -147,6 +161,59 @@ pub fn write_prompt_packet(
         implementation_prompt_file: paths.implementation_prompt_file.to_string_lossy().to_string(),
         topology_node_count: existing_nodes.len(),
     })
+}
+
+fn build_abstraction_memory_section(
+    project_root: &Path,
+    demand: &str,
+) -> Result<Option<String>, anyhow::Error> {
+    let triad_paths = WorkspacePaths::new(project_root.to_path_buf());
+    let config = load_triad_config(&triad_paths);
+    if !config.abstraction_memory.enabled {
+        return Ok(None);
+    }
+
+    let stable_source_paths = collect_stable_source_paths(&config);
+    let project_name = project_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project");
+
+    if config.abstraction_memory.auto_sync_on_prompt {
+        ensure_abstraction_memory(
+            &triad_paths.map_file,
+            &triad_paths.abstraction_memory_file,
+            project_name,
+            &config.abstraction_memory,
+            &stable_source_paths,
+            false,
+        )?;
+    } else if !triad_paths.abstraction_memory_file.exists() {
+        return Ok(None);
+    }
+
+    let context = build_prompt_context(
+        &triad_paths.map_file,
+        &triad_paths.abstraction_memory_file,
+        &RecommendationInput {
+            query: demand.to_string(),
+            focus_node_id: None,
+            focus_source_path: None,
+            limit: config.abstraction_memory.max_prompt_entries,
+        },
+        &config.abstraction_memory,
+    );
+
+    Ok(Some(render_prompt_context(&context)))
+}
+
+fn collect_stable_source_paths(config: &crate::config::TriadConfig) -> HashSet<String> {
+    config
+        .topology_risk
+        .mature_stable_source_paths
+        .iter()
+        .map(|path| path.replace('\\', "/").trim_start_matches("./").trim_end_matches('/').to_string())
+        .collect()
 }
 
 // ── Prompt Builders ─────────────────────────────────────────────────

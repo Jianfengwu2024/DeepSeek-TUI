@@ -239,19 +239,7 @@ pub fn scan_project(project_root: &Path, options: &ParserOptions) -> Result<Pars
                 if name.starts_with('.') && name != "." {
                     return false;
                 }
-                if matches!(
-                    name.as_ref(),
-                    "node_modules"
-                        | "target"
-                        | "dist"
-                        | "build"
-                        | ".git"
-                        | "__pycache__"
-                        | "venv"
-                        | ".venv"
-                        | ".next"
-                        | "vendor"
-                ) {
+                if crate::config::HARD_EXCLUDE_SEGMENTS.contains(&name.as_ref()) {
                     return false;
                 }
             }

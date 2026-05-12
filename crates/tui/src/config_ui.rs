@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::commands;
-use crate::config::{Config, StatusItem, normalize_model_name};
+use crate::config::{Config, StatusItem, TriadMindConfig, TriadMindMode, normalize_model_name};
 use crate::localization::{normalize_configured_locale, resolve_locale};
 use crate::settings::Settings;
 use crate::tui::app::{
@@ -82,6 +82,11 @@ pub struct SettingsSection {
 pub struct ConfigSection {
     pub mcp_config_path: String,
     pub reasoning_effort: ReasoningEffortValue,
+    #[schemars(
+        title = "TriadMind governance mode",
+        description = "Controls whether TriadMind tools and post-edit governance are enabled"
+    )]
+    pub triadmind_mode: TriadMindModeValue,
     #[schemars(title = "Status line items")]
     pub status_items: Vec<StatusItemValue>,
 }
@@ -227,6 +232,14 @@ pub enum StatusIndicatorValue {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum TriadMindModeValue {
+    Disabled,
+    ToolsOnly,
+    Advisory,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum StatusItemValue {
     Mode,
     Model,
@@ -297,6 +310,7 @@ pub fn build_document(app: &App, config: &Config) -> Result<ConfigUiDocument> {
         config: ConfigSection {
             mcp_config_path: app.mcp_config_path.display().to_string(),
             reasoning_effort,
+            triadmind_mode: config.triadmind_mode().into(),
             status_items,
         },
     })
@@ -503,6 +517,7 @@ pub fn apply_document(
     apply_reasoning_effort(app, config, doc.config.reasoning_effort, persist)?;
     let requires_engine_sync = app.compaction_config() != previous_compaction
         || app.reasoning_effort != previous_reasoning_effort;
+    apply_triadmind_mode(config, doc.config.triadmind_mode, persist, &mut notes)?;
 
     let new_status_items = parse_status_items(&doc.config.status_items);
     if app.status_items != new_status_items {
@@ -637,6 +652,35 @@ fn parse_status_items(items: &[StatusItemValue]) -> Vec<StatusItem> {
     items.iter().copied().map(Into::into).collect()
 }
 
+fn apply_triadmind_mode(
+    config: &mut Config,
+    value: TriadMindModeValue,
+    persist: bool,
+    notes: &mut Vec<String>,
+) -> Result<()> {
+    let mode: TriadMindMode = value.into();
+    if config.triadmind_mode() == mode && !persist {
+        return Ok(());
+    }
+
+    if persist {
+        let path = commands::persist_table_string_key("triadmind", "mode", value.as_setting())?;
+        notes.push(format!(
+            "triadmind.mode = {} (saved to {}; restart required for tool/governance changes)",
+            value.as_setting(),
+            path.display()
+        ));
+    } else {
+        notes.push(format!(
+            "triadmind.mode = {} (session only; restart required for tool/governance changes)",
+            value.as_setting()
+        ));
+    }
+
+    config.triadmind = Some(TriadMindConfig { mode: Some(mode) });
+    Ok(())
+}
+
 impl ApprovalModeValue {
     fn as_setting(self) -> &'static str {
         match self {
@@ -769,6 +813,16 @@ impl ReasoningEffortValue {
     }
 }
 
+impl TriadMindModeValue {
+    fn as_setting(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::ToolsOnly => "tools_only",
+            Self::Advisory => "advisory",
+        }
+    }
+}
+
 impl From<ReasoningEffortValue> for ReasoningEffort {
     fn from(value: ReasoningEffortValue) -> Self {
         match value {
@@ -778,6 +832,26 @@ impl From<ReasoningEffortValue> for ReasoningEffort {
             ReasoningEffortValue::High => Self::High,
             ReasoningEffortValue::Auto => Self::Auto,
             ReasoningEffortValue::Max => Self::Max,
+        }
+    }
+}
+
+impl From<TriadMindMode> for TriadMindModeValue {
+    fn from(value: TriadMindMode) -> Self {
+        match value {
+            TriadMindMode::Disabled => Self::Disabled,
+            TriadMindMode::ToolsOnly => Self::ToolsOnly,
+            TriadMindMode::Advisory => Self::Advisory,
+        }
+    }
+}
+
+impl From<TriadMindModeValue> for TriadMindMode {
+    fn from(value: TriadMindModeValue) -> Self {
+        match value {
+            TriadMindModeValue::Disabled => Self::Disabled,
+            TriadMindModeValue::ToolsOnly => Self::ToolsOnly,
+            TriadMindModeValue::Advisory => Self::Advisory,
         }
     }
 }
@@ -896,7 +970,7 @@ fn bool_str(value: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::config::{Config, TriadMindConfig, TriadMindMode};
     use crate::test_support::lock_test_env;
     use crate::tui::app::{App, TuiOptions};
     use std::fs;
@@ -939,6 +1013,22 @@ mod tests {
         assert_eq!(doc.runtime.model, app.model);
         assert_eq!(doc.runtime.approval_mode, ApprovalModeValue::Suggest);
         assert_eq!(doc.config.reasoning_effort, ReasoningEffortValue::Max);
+        assert_eq!(doc.config.triadmind_mode, TriadMindModeValue::Disabled);
+    }
+
+    #[test]
+    fn build_document_reflects_triadmind_mode_from_config() {
+        let app = app();
+        let config = Config {
+            triadmind: Some(TriadMindConfig {
+                mode: Some(TriadMindMode::Advisory),
+            }),
+            ..Config::default()
+        };
+
+        let doc = build_document(&app, &config).expect("document");
+
+        assert_eq!(doc.config.triadmind_mode, TriadMindModeValue::Advisory);
     }
 
     #[test]
@@ -1087,6 +1177,7 @@ mcp_config_path = "disk-mcp.json"
         let mut doc = build_document(&app, &config).expect("document");
         doc.runtime.model = "deepseek-v4-flash".to_string();
         doc.config.reasoning_effort = ReasoningEffortValue::Low;
+        doc.config.triadmind_mode = TriadMindModeValue::ToolsOnly;
         doc.config.mcp_config_path = "session-mcp.json".to_string();
         doc.settings.cost_currency = CostCurrencyValue::Cny;
 
@@ -1107,6 +1198,7 @@ mcp_config_path = "disk-mcp.json"
             Some("disk-mcp.json"),
             "session-only apply must not reload persisted config back into runtime state"
         );
+        assert_eq!(config.triadmind_mode(), TriadMindMode::ToolsOnly);
     }
 
     #[test]
@@ -1121,5 +1213,51 @@ mcp_config_path = "disk-mcp.json"
 
         assert!(outcome.changed);
         assert!(!outcome.requires_engine_sync);
+    }
+
+    #[test]
+    fn persistent_apply_writes_triadmind_mode_to_config() {
+        let _lock = lock_test_env();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let temp_root = std::env::temp_dir().join(format!(
+            "deepseek-config-ui-triadmind-persist-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(temp_root.join(".deepseek")).expect("config dir");
+        let config_path = temp_root.join(".deepseek").join("config.toml");
+        fs::write(&config_path, "model = \"deepseek-v4-pro\"\n").expect("seed config");
+        let old_config_path = std::env::var_os("DEEPSEEK_CONFIG_PATH");
+        unsafe {
+            std::env::set_var("DEEPSEEK_CONFIG_PATH", &config_path);
+        }
+
+        let mut app = app();
+        app.config_path = Some(config_path.clone());
+        let mut config = Config::load(Some(config_path.clone()), None).expect("load config");
+        let mut doc = build_document(&app, &config).expect("document");
+        doc.config.triadmind_mode = TriadMindModeValue::Advisory;
+
+        let outcome = apply_document(doc, &mut app, &mut config, true).expect("apply");
+        let saved = fs::read_to_string(&config_path).expect("saved config");
+
+        assert!(outcome.changed);
+        assert_eq!(config.triadmind_mode(), TriadMindMode::Advisory);
+        assert!(saved.contains("[triadmind]"), "expected triadmind table in {saved}");
+        assert!(
+            saved.contains("mode = \"advisory\""),
+            "expected triadmind mode in {saved}"
+        );
+
+        unsafe {
+            if let Some(value) = old_config_path {
+                std::env::set_var("DEEPSEEK_CONFIG_PATH", value);
+            } else {
+                std::env::remove_var("DEEPSEEK_CONFIG_PATH");
+            }
+        }
     }
 }

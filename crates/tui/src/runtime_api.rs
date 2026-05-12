@@ -153,6 +153,7 @@ struct HealthResponse {
     status: &'static str,
     service: &'static str,
     mode: &'static str,
+    host_plugins: Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -581,11 +582,75 @@ fn token_from_query(query: Option<&str>) -> Option<&str> {
     })
 }
 
-async fn health() -> Json<HealthResponse> {
+async fn health(State(state): State<RuntimeApiState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         service: "deepseek-runtime-api",
         mode: "local",
+        host_plugins: runtime_host_plugins_report(&state.config),
+    })
+}
+
+fn runtime_engine_plugin_config(config: &Config) -> crate::core::engine::EngineConfig {
+    crate::core::engine::EngineConfig {
+        triadmind_mode: config.triadmind_mode(),
+        ..crate::core::engine::EngineConfig::default()
+    }
+}
+
+fn runtime_plugin_stability_label(
+    stability: crate::core::engine::plugin_metadata::PluginStability,
+) -> &'static str {
+    match stability {
+        crate::core::engine::plugin_metadata::PluginStability::Experimental => "experimental",
+        crate::core::engine::plugin_metadata::PluginStability::Stable => "stable",
+    }
+}
+
+fn runtime_plugin_default_state_label(
+    default_state: crate::core::engine::plugin_metadata::PluginDefaultState,
+) -> &'static str {
+    match default_state {
+        crate::core::engine::plugin_metadata::PluginDefaultState::Disabled => "disabled",
+        crate::core::engine::plugin_metadata::PluginDefaultState::Enabled => "enabled",
+    }
+}
+
+fn runtime_host_plugins_report(config: &Config) -> Value {
+    let engine_config = runtime_engine_plugin_config(config);
+    let tool_plugins: Vec<Value> = crate::core::engine::tool_plugins::tool_plugin_registry()
+        .iter()
+        .map(|factory| {
+            json!({
+                "id": factory.metadata.id,
+                "description": factory.metadata.description,
+                "stability": runtime_plugin_stability_label(factory.metadata.stability),
+                "default_state": runtime_plugin_default_state_label(factory.metadata.default_state),
+                "enabled_in": {
+                    "agent": (factory.enabled)(&engine_config, crate::tui::app::AppMode::Agent),
+                    "yolo": (factory.enabled)(&engine_config, crate::tui::app::AppMode::Yolo),
+                    "plan": (factory.enabled)(&engine_config, crate::tui::app::AppMode::Plan),
+                }
+            })
+        })
+        .collect();
+
+    let governance_plugins: Vec<Value> = crate::core::engine::governance::post_edit_governance_registry()
+        .iter()
+        .map(|factory| {
+            json!({
+                "id": factory.metadata.id,
+                "description": factory.metadata.description,
+                "stability": runtime_plugin_stability_label(factory.metadata.stability),
+                "default_state": runtime_plugin_default_state_label(factory.metadata.default_state),
+                "enabled": (factory.build)(&engine_config).is_some(),
+            })
+        })
+        .collect();
+
+    json!({
+        "tool_plugins": tool_plugins,
+        "governance_plugins": governance_plugins,
     })
 }
 
@@ -2153,6 +2218,16 @@ mod tests {
             .json()
             .await?;
         assert_eq!(health["status"], "ok");
+        assert!(
+            health["host_plugins"]["tool_plugins"]
+                .as_array()
+                .is_some_and(|plugins| plugins.iter().any(|plugin| plugin["id"] == "triadmind_tools"))
+        );
+        assert!(
+            health["host_plugins"]["governance_plugins"]
+                .as_array()
+                .is_some_and(|plugins| plugins.iter().any(|plugin| plugin["id"] == "triadmind"))
+        );
 
         let created: serde_json::Value = client
             .post(format!("http://{addr}/v1/tasks"))
@@ -2196,6 +2271,30 @@ mod tests {
 
         handle.abort();
         Ok(())
+    }
+
+    #[test]
+    fn runtime_host_plugins_report_tracks_triadmind_advisory_mode() {
+        let config = Config {
+            triadmind: Some(crate::config::TriadMindConfig {
+                mode: Some(crate::config::TriadMindMode::Advisory),
+            }),
+            ..Default::default()
+        };
+
+        let report = runtime_host_plugins_report(&config);
+        let tool = report["tool_plugins"]
+            .as_array()
+            .and_then(|plugins| plugins.iter().find(|plugin| plugin["id"] == "triadmind_tools"))
+            .expect("triadmind tool plugin");
+        let governance = report["governance_plugins"]
+            .as_array()
+            .and_then(|plugins| plugins.iter().find(|plugin| plugin["id"] == "triadmind"))
+            .expect("triadmind governance plugin");
+
+        assert_eq!(tool["enabled_in"]["agent"], true);
+        assert_eq!(tool["enabled_in"]["plan"], false);
+        assert_eq!(governance["enabled"], true);
     }
 
     #[tokio::test]
