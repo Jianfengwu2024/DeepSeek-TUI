@@ -2187,12 +2187,35 @@ fn edited_paths_for_apply_patch_with_files_returns_each_path() {
 }
 
 #[test]
+fn edited_paths_for_apply_patch_with_changes_returns_each_path() {
+    let input = json!({
+        "changes": [
+            { "path": "a.rs", "content": "" },
+            { "path": "b.rs", "content": "" }
+        ]
+    });
+    let paths = edited_paths_for_tool("apply_patch", &input);
+    assert_eq!(paths, vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")]);
+}
+
+#[test]
 fn edited_paths_for_apply_patch_with_diff_text_extracts_paths() {
     let input = json!({
         "patch": "--- a/foo.rs\n+++ b/foo.rs\n@@ -1 +1 @@\n-let x: i32 = 0;\n+let x: i32 = \"oops\";\n"
     });
     let paths = edited_paths_for_tool("apply_patch", &input);
     assert_eq!(paths, vec![PathBuf::from("foo.rs")]);
+}
+
+#[test]
+fn edited_paths_for_pandoc_convert_uses_output_path() {
+    let input = json!({
+        "source_path": "note.md",
+        "target_format": "html",
+        "output_path": "site/generated.ts"
+    });
+    let paths = edited_paths_for_tool("pandoc_convert", &input);
+    assert_eq!(paths, vec![PathBuf::from("site/generated.ts")]);
 }
 
 #[test]

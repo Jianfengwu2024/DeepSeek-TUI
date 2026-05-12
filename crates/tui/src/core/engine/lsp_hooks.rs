@@ -11,8 +11,7 @@ use super::*;
 
 /// #136: derive the file path(s) edited by a tool call. Returns the empty
 /// vec for tools that don't modify files. We intentionally only handle the
-/// three known edit tools — adding more (e.g. specialized refactor tools)
-/// is a one-line change here.
+/// known file-mutating tools and payload shapes used by the host runtime.
 pub(super) fn edited_paths_for_tool(tool_name: &str, input: &serde_json::Value) -> Vec<PathBuf> {
     match tool_name {
         "edit_file" | "write_file" => {
@@ -24,15 +23,18 @@ pub(super) fn edited_paths_for_tool(tool_name: &str, input: &serde_json::Value) 
         }
         "apply_patch" => {
             // `apply_patch` accepts either a `path` override or a list of
-            // `files` (each `{path, content}`). We try both shapes.
+            // file edits. Support both the canonical `files` shape and the
+            // legacy `changes` alias used in some helper layers / tests.
             let mut out = Vec::new();
             if let Some(path) = input.get("path").and_then(|v| v.as_str()) {
                 out.push(PathBuf::from(path));
             }
-            if let Some(files) = input.get("files").and_then(|v| v.as_array()) {
-                for entry in files {
-                    if let Some(path) = entry.get("path").and_then(|v| v.as_str()) {
-                        out.push(PathBuf::from(path));
+            for key in ["files", "changes"] {
+                if let Some(files) = input.get(key).and_then(|v| v.as_array()) {
+                    for entry in files {
+                        if let Some(path) = entry.get("path").and_then(|v| v.as_str()) {
+                            out.push(PathBuf::from(path));
+                        }
                     }
                 }
             }
@@ -44,6 +46,12 @@ pub(super) fn edited_paths_for_tool(tool_name: &str, input: &serde_json::Value) 
             }
             out
         }
+        "pandoc_convert" => input
+            .get("output_path")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+            .into_iter()
+            .collect(),
         _ => Vec::new(),
     }
 }

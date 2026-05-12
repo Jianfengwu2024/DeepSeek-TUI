@@ -670,14 +670,13 @@ fn apply_triadmind_mode(
             value.as_setting(),
             path.display()
         ));
+        config.triadmind = Some(TriadMindConfig { mode: Some(mode) });
     } else {
         notes.push(format!(
-            "triadmind.mode = {} (session only; restart required for tool/governance changes)",
+            "triadmind.mode = {} (draft updated; save and restart required before tool/governance changes take effect)",
             value.as_setting()
         ));
     }
-
-    config.triadmind = Some(TriadMindConfig { mode: Some(mode) });
     Ok(())
 }
 
@@ -1198,7 +1197,24 @@ mcp_config_path = "disk-mcp.json"
             Some("disk-mcp.json"),
             "session-only apply must not reload persisted config back into runtime state"
         );
-        assert_eq!(config.triadmind_mode(), TriadMindMode::ToolsOnly);
+        assert_eq!(config.triadmind_mode(), TriadMindMode::Disabled);
+    }
+
+    #[test]
+    fn session_only_triadmind_mode_change_stays_draft_only() {
+        let _lock = lock_test_env();
+        let mut app = app();
+        let mut config = Config::default();
+        let mut doc = build_document(&app, &config).expect("document");
+        doc.config.triadmind_mode = TriadMindModeValue::Advisory;
+
+        let outcome = apply_document(doc, &mut app, &mut config, false).expect("apply");
+
+        assert!(outcome.changed);
+        assert_eq!(config.triadmind_mode(), TriadMindMode::Disabled);
+        assert!(
+            outcome.final_message.contains("save and restart required before tool/governance changes take effect")
+        );
     }
 
     #[test]

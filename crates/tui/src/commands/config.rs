@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use super::CommandResult;
 use crate::client::DeepSeekClient;
-use crate::config::{COMMON_DEEPSEEK_MODELS, clear_api_key, normalize_model_name};
+use crate::config::{
+    COMMON_DEEPSEEK_MODELS, Config, TriadMindMode, clear_api_key, normalize_model_name,
+};
 use crate::config_ui::{ConfigUiMode, parse_mode};
 use crate::llm_client::LlmClient;
 use crate::localization::resolve_locale;
@@ -104,6 +106,16 @@ fn show_single_setting(app: &App, key: &str) -> CommandResult {
             crate::tui::app::TranscriptSpacing::Spacious => "spacious",
         }
     }
+    fn triadmind_mode_display(app: &App) -> String {
+        Config::load(app.config_path.clone(), app.config_profile.as_deref())
+            .map(|cfg| match cfg.triadmind_mode() {
+                TriadMindMode::Disabled => "disabled",
+                TriadMindMode::ToolsOnly => "tools_only",
+                TriadMindMode::Advisory => "advisory",
+            })
+            .unwrap_or("disabled")
+            .to_string()
+    }
     let value = match key.as_str() {
         "model" => {
             if app.auto_model {
@@ -150,6 +162,7 @@ fn show_single_setting(app: &App, key: &str) -> CommandResult {
             }
             .to_string(),
         ),
+        "triadmind" | "triadmind_mode" | "triadmind.mode" => Some(triadmind_mode_display(app)),
         _ => {
             let known = Settings::available_settings()
                 .iter()
@@ -337,6 +350,30 @@ pub fn set_config_value(app: &mut App, key: &str, value: &str, persist: bool) ->
     let key = key.to_lowercase();
 
     match key.as_str() {
+        "triadmind" | "triadmind_mode" | "triadmind.mode" => {
+            let normalized = match value.trim().to_ascii_lowercase().as_str() {
+                "disabled" => "disabled",
+                "tools_only" | "toolsonly" | "tools-only" => "tools_only",
+                "advisory" => "advisory",
+                _ => {
+                    return CommandResult::error(
+                        "Invalid triadmind.mode. Use: disabled, tools_only, advisory",
+                    );
+                }
+            };
+            if !persist {
+                return CommandResult::error(
+                    "triadmind.mode cannot be applied session-only. Use `--save` and restart to change tool/governance behavior.",
+                );
+            }
+            return match persist_table_string_key("triadmind", "mode", normalized) {
+                Ok(path) => CommandResult::message(format!(
+                    "triadmind.mode = {normalized} (saved to {}; restart required for tool/governance changes)",
+                    path.display()
+                )),
+                Err(err) => CommandResult::error(format!("Failed to save: {err}")),
+            };
+        }
         "model" => {
             // Support "/model auto" — auto-select model based on request complexity
             if value.trim().eq_ignore_ascii_case("auto") {
@@ -1477,6 +1514,64 @@ mod tests {
         let settings_path = Settings::path().unwrap();
         let saved = fs::read_to_string(settings_path).unwrap();
         assert!(saved.contains("cost_currency = \"cny\""));
+    }
+
+    #[test]
+    fn config_command_triadmind_mode_show_reads_config() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!(
+            "deepseek-tui-triadmind-show-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(temp_root.join(".deepseek")).unwrap();
+        let config_path = temp_root.join(".deepseek").join("config.toml");
+        fs::write(&config_path, "[triadmind]\nmode = \"advisory\"\n").unwrap();
+        let _guard = EnvGuard::new(&temp_root);
+
+        let mut app = create_test_app();
+        app.config_path = Some(config_path);
+        let result = config_command(&mut app, Some("triadmind.mode"));
+
+        assert_eq!(result.message.as_deref(), Some("triadmind.mode = advisory"));
+    }
+
+    #[test]
+    fn config_command_triadmind_mode_save_persists_value() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!(
+            "deepseek-tui-triadmind-save-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(temp_root.join(".deepseek")).unwrap();
+        let _guard = EnvGuard::new(&temp_root);
+
+        let mut app = create_test_app();
+        let result = config_command(&mut app, Some("triadmind.mode advisory --save"));
+        let msg = result.message.unwrap();
+        let config_path = temp_root.join(".deepseek").join("config.toml");
+        let saved = fs::read_to_string(config_path).unwrap();
+
+        assert!(msg.contains("triadmind.mode = advisory"));
+        assert!(saved.contains("[triadmind]"));
+        assert!(saved.contains("mode = \"advisory\""));
+    }
+
+    #[test]
+    fn config_command_triadmind_mode_rejects_session_only_apply() {
+        let mut app = create_test_app();
+        let result = config_command(&mut app, Some("triadmind.mode advisory"));
+        let msg = result.message.unwrap();
+
+        assert!(result.is_error);
+        assert!(msg.contains("cannot be applied session-only"));
     }
 
     #[test]
