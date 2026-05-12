@@ -1059,6 +1059,7 @@ impl Engine {
                             | "exec_wait"
                             | "exec_interact"
                             | CODE_EXECUTION_TOOL_NAME
+                            | JS_EXECUTION_TOOL_NAME
                     )
                 {
                     blocked_error = Some(ToolError::permission_denied(format!(
@@ -1099,6 +1100,7 @@ impl Engine {
                     && tool_def.is_none()
                     && !McpPool::is_mcp_tool(&tool_name)
                     && tool_name != CODE_EXECUTION_TOOL_NAME
+                    && tool_name != JS_EXECUTION_TOOL_NAME
                     && !is_tool_search_tool(&tool_name)
                 {
                     blocked_error = Some(ToolError::not_available(missing_tool_error_message(
@@ -1123,6 +1125,13 @@ impl Engine {
                     approval_required = true;
                     approval_description =
                         "Run model-provided Python code in local execution sandbox".to_string();
+                    supports_parallel = false;
+                    read_only = false;
+                } else if tool_name == JS_EXECUTION_TOOL_NAME {
+                    approval_required = true;
+                    approval_description =
+                        "Run model-provided JavaScript code in local Node.js execution sandbox"
+                            .to_string();
                     supports_parallel = false;
                     read_only = false;
                 } else if is_tool_search_tool(&tool_name) {
@@ -1410,6 +1419,31 @@ impl Engine {
                         continue;
                     }
 
+                    if tool_name == JS_EXECUTION_TOOL_NAME {
+                        let started_at = Instant::now();
+                        let result =
+                            execute_js_execution_tool(&tool_input, &self.session.workspace).await;
+
+                        let _ = self
+                            .tx_event
+                            .send(Event::ToolCallComplete {
+                                id: tool_id.clone(),
+                                name: tool_name.clone(),
+                                result: result.clone(),
+                            })
+                            .await;
+
+                        outcomes[plan.index] = Some(ToolExecOutcome {
+                            index: plan.index,
+                            id: tool_id,
+                            name: tool_name,
+                            input: tool_input,
+                            started_at,
+                            result,
+                        });
+                        continue;
+                    }
+
                     if is_tool_search_tool(&tool_name) {
                         let started_at = Instant::now();
                         let result = execute_tool_search(
@@ -1553,8 +1587,9 @@ impl Engine {
                     {
                         let ws = self.session.workspace.clone();
                         let tid = tool_id.clone();
+                        let cap = self.config.snapshots_max_workspace_bytes;
                         let _ = tokio::task::spawn_blocking(move || {
-                            crate::core::turn::pre_tool_snapshot(&ws, &tid)
+                            crate::core::turn::pre_tool_snapshot(&ws, &tid, cap)
                         })
                         .await;
                     }

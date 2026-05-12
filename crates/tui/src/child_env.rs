@@ -150,9 +150,12 @@ fn is_allowed_parent_env_key(key: &OsStr) -> bool {
             | "HOMEDRIVE"
             | "HOMEPATH"
             // Preserve Windows toolchain context when the parent shell has
-            // already loaded VsDevCmd/vcvars. Without these, `exec_shell`
-            // can find `link.exe` via PATH but still fail to resolve SDK/CRT
-            // libraries like `kernel32.lib`.
+            // already loaded VsDevCmd / vcvars. Without these, `exec_shell`
+            // can find `link.exe` via PATH but still fail to resolve
+            // SDK/CRT libraries like `kernel32.lib`, so any model-driven
+            // `cargo build` from inside the TUI silently breaks on
+            // Windows installs that don't run inside a Developer Command
+            // Prompt. Harvested from PR #1487.
             | "LIB"
             | "LIBPATH"
             | "INCLUDE"
@@ -487,6 +490,9 @@ mod tests {
         let prev_lib = std::env::var_os("LIB");
         let prev_include = std::env::var_os("INCLUDE");
         let prev_sdk = std::env::var_os("WINDOWSSDKDIR");
+        // SAFETY: serialised by env_lock above. Restoring after the
+        // assertion is also under the same guard so concurrent tests
+        // never see our staged values.
         unsafe {
             std::env::set_var("LIB", r"C:\sdk\lib");
             std::env::set_var("INCLUDE", r"C:\sdk\include");
@@ -495,17 +501,21 @@ mod tests {
 
         let env = sanitized_child_env(std::iter::empty::<(OsString, OsString)>());
 
-        match prev_lib {
-            Some(value) => unsafe { std::env::set_var("LIB", value) },
-            None => unsafe { std::env::remove_var("LIB") },
-        }
-        match prev_include {
-            Some(value) => unsafe { std::env::set_var("INCLUDE", value) },
-            None => unsafe { std::env::remove_var("INCLUDE") },
-        }
-        match prev_sdk {
-            Some(value) => unsafe { std::env::set_var("WINDOWSSDKDIR", value) },
-            None => unsafe { std::env::remove_var("WINDOWSSDKDIR") },
+        // Restore prior state before asserting so a panic still leaves
+        // the process env clean for the next test.
+        unsafe {
+            match prev_lib {
+                Some(value) => std::env::set_var("LIB", value),
+                None => std::env::remove_var("LIB"),
+            }
+            match prev_include {
+                Some(value) => std::env::set_var("INCLUDE", value),
+                None => std::env::remove_var("INCLUDE"),
+            }
+            match prev_sdk {
+                Some(value) => std::env::set_var("WINDOWSSDKDIR", value),
+                None => std::env::remove_var("WINDOWSSDKDIR"),
+            }
         }
 
         assert!(
@@ -519,7 +529,8 @@ mod tests {
             "child env should preserve INCLUDE"
         );
         assert!(
-            env.iter().any(|(key, value)| key == "WINDOWSSDKDIR" && value == r"C:\sdk"),
+            env.iter()
+                .any(|(key, value)| key == "WINDOWSSDKDIR" && value == r"C:\sdk"),
             "child env should preserve WINDOWSSDKDIR"
         );
     }

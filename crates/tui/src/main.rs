@@ -30,6 +30,7 @@ mod core;
 mod cost_status;
 mod cycle_manager;
 mod deepseek_theme;
+mod dependencies;
 mod error_taxonomy;
 mod eval;
 mod execpolicy;
@@ -70,6 +71,7 @@ mod test_support;
 mod tools;
 mod tui;
 mod utils;
+mod vision;
 mod working_set;
 mod workspace_trust;
 
@@ -591,11 +593,14 @@ async fn main() -> Result<()> {
         // Restore the terminal first so the panic message itself, plus the
         // user's shell after exit, are visible. Best-effort — we may not be
         // in raw / alt-screen mode if the panic happens pre-TUI.
-        use crossterm::event::{
-            DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags,
-        };
+        use crossterm::event::{DisableBracketedPaste, DisableMouseCapture};
         use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
-        let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+        // Use the Windows-aware helper: crossterm's PopKeyboardEnhancementFlags
+        // is a no-op on Windows (is_ansi_code_supported() == false), so the
+        // plain execute!() form would leave the terminal in Kitty-enhanced mode
+        // after a panic. pop_keyboard_enhancement_flags writes the pop escape
+        // directly on Windows (#1359).
+        crate::tui::ui::pop_keyboard_enhancement_flags(&mut std::io::stdout());
         // Best-effort: turn off bracketed paste + mouse capture so the user's
         // parent shell doesn't get stuck wrapping pastes in `\e[200~…\e[201~`
         // or printing `\e[<…M` on every click after a TUI panic.
@@ -940,6 +945,7 @@ fn mcp_template_json() -> Result<String> {
             required: false,
             enabled_tools: Vec::new(),
             disabled_tools: Vec::new(),
+            headers: std::collections::HashMap::new(),
         },
     );
     serde_json::to_string_pretty(&cfg)
@@ -1364,6 +1370,10 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
                     "OPENAI_API_KEY",
                     "deepseek auth set --provider openai --api-key \"...\"",
                 ),
+                crate::config::ApiProvider::Atlascloud => (
+                    "ATLASCLOUD_API_KEY",
+                    "deepseek auth set --provider atlascloud --api-key \"...\"",
+                ),
                 crate::config::ApiProvider::Openrouter => (
                     "OPENROUTER_API_KEY",
                     "deepseek auth set --provider openrouter --api-key \"...\"",
@@ -1397,6 +1407,7 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
                 match config.api_provider() {
                     crate::config::ApiProvider::NvidiaNim => "nvidia_nim",
                     crate::config::ApiProvider::Openai => "openai",
+                    crate::config::ApiProvider::Atlascloud => "atlascloud",
                     crate::config::ApiProvider::Openrouter => "openrouter",
                     crate::config::ApiProvider::Novita => "novita",
                     crate::config::ApiProvider::Fireworks => "fireworks",
@@ -2135,6 +2146,212 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
                 "·".dimmed()
             );
         }
+    }
+
+    // Tool dependencies — probe external binaries that individual
+    // tools rely on (Python for code_execution, pdftotext for PDF
+    // reading) so users see explicit ✓/✗ rather than the tool failing
+    // at execution time with "program not found". New in v0.8.31.
+    println!();
+    println!("{}", "Tool Dependencies:".bold());
+
+    match crate::dependencies::resolve_python_interpreter() {
+        Some(name) => println!(
+            "  {} Python: {} → code_execution tool registered",
+            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            name
+        ),
+        None => {
+            println!(
+                "  {} Python: not found (tried {:?})",
+                "✗".truecolor(red_r, red_g, red_b),
+                crate::dependencies::PYTHON_CANDIDATES,
+            );
+            println!("    code_execution tool is NOT advertised to the model on this install.");
+            println!("    Install Python 3 and ensure one of those names is on PATH:");
+            match std::env::consts::OS {
+                "macos" => {
+                    println!("      brew install python@3.12   (or download from python.org)")
+                }
+                "linux" => println!(
+                    "      sudo apt install python3    (Debian/Ubuntu) — or your distro's equivalent"
+                ),
+                "windows" => {
+                    println!("      winget install Python.Python.3   (or download from python.org)")
+                }
+                other => println!("      install Python 3 for {other} from python.org"),
+            }
+        }
+    }
+
+    match crate::dependencies::resolve_node() {
+        Some(_) => println!(
+            "  {} Node.js: present → js_execution tool registered",
+            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+        ),
+        None => {
+            println!(
+                "  {} Node.js: not found (tried `node`)",
+                "✗".truecolor(red_r, red_g, red_b),
+            );
+            println!("    js_execution tool is NOT advertised to the model on this install.");
+            println!("    Install Node 18+ and ensure `node` is on PATH:");
+            match std::env::consts::OS {
+                "macos" => println!("      brew install node   (or download from nodejs.org)"),
+                "linux" => println!(
+                    "      sudo apt install nodejs    (Debian/Ubuntu) — or your distro's equivalent"
+                ),
+                "windows" => {
+                    println!("      winget install OpenJS.NodeJS   (or download from nodejs.org)")
+                }
+                other => println!("      install Node.js for {other} from nodejs.org"),
+            }
+        }
+    }
+
+    match crate::dependencies::resolve_pandoc() {
+        Some(_) => println!(
+            "  {} pandoc: present → pandoc_convert tool registered",
+            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+        ),
+        None => {
+            println!("  {} pandoc: not found (optional)", "·".dimmed(),);
+            println!(
+                "    pandoc_convert tool is NOT advertised to the model. Install pandoc to enable:"
+            );
+            match std::env::consts::OS {
+                "macos" => println!("      brew install pandoc"),
+                "linux" => println!(
+                    "      sudo apt install pandoc    (Debian/Ubuntu) — or your distro's equivalent"
+                ),
+                "windows" => {
+                    println!("      winget install JohnMacFarlane.Pandoc")
+                }
+                other => println!("      install pandoc for {other} from pandoc.org"),
+            }
+        }
+    }
+
+    match crate::dependencies::resolve_tesseract() {
+        Some(_) => println!(
+            "  {} tesseract: present → image_ocr tool registered",
+            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+        ),
+        None => {
+            println!("  {} tesseract: not found (optional)", "·".dimmed(),);
+            println!(
+                "    image_ocr tool is NOT advertised to the model. Install tesseract to enable:"
+            );
+            match std::env::consts::OS {
+                "macos" => println!("      brew install tesseract"),
+                "linux" => println!(
+                    "      sudo apt install tesseract-ocr    (Debian/Ubuntu) — or your distro's equivalent"
+                ),
+                "windows" => println!("      winget install UB-Mannheim.TesseractOCR"),
+                other => {
+                    println!("      install tesseract for {other} from tesseract-ocr.github.io")
+                }
+            }
+        }
+    }
+
+    // PDF reader: pure-Rust `pdf-extract` is the v0.8.32 default, so
+    // `pdftotext` is no longer required for `read_file` to handle PDFs.
+    // We still surface its presence (a) so users with column-heavy PDFs
+    // know they can opt in via `prefer_external_pdftotext = true`, and
+    // (b) so users who *did* opt in get a clean signal when the binary
+    // is missing rather than discovering it on the next PDF read.
+    let prefer_external = crate::settings::Settings::load()
+        .map(|s| s.prefer_external_pdftotext)
+        .unwrap_or(false);
+    match crate::dependencies::resolve_pdftotext() {
+        Some(_) => {
+            if prefer_external {
+                println!(
+                    "  {} pdftotext: available → read_file routes PDFs through Poppler (prefer_external_pdftotext = true)",
+                    "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                );
+            } else {
+                println!(
+                    "  {} pdftotext: available (optional — pure-Rust extractor is the default in v0.8.32)",
+                    "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                );
+                println!(
+                    "    Set `prefer_external_pdftotext = true` in settings.toml for column-heavy PDFs."
+                );
+            }
+        }
+        None => {
+            if prefer_external {
+                println!(
+                    "  {} pdftotext: not found, but `prefer_external_pdftotext = true` is set → PDF reads will return `binary_unavailable`",
+                    "✗".truecolor(red_r, red_g, red_b),
+                );
+                println!(
+                    "    Either install Poppler or unset `prefer_external_pdftotext` to fall back to the bundled pure-Rust extractor."
+                );
+                match std::env::consts::OS {
+                    "macos" => println!("    Install via: brew install poppler"),
+                    "linux" => println!(
+                        "    Install via: sudo apt install poppler-utils   (Debian/Ubuntu)"
+                    ),
+                    "windows" => println!(
+                        "    Install Poppler for Windows from https://blog.alivate.com.au/poppler-windows/"
+                    ),
+                    _ => {}
+                }
+            } else {
+                println!(
+                    "  {} pdftotext: not found (optional — pure-Rust extractor is the default in v0.8.32)",
+                    "·".dimmed(),
+                );
+                println!(
+                    "    Install Poppler only if you want to opt into pdftotext for column-heavy PDFs."
+                );
+            }
+        }
+    }
+
+    // Terminal-quirk overrides currently active. Mirrors the env
+    // signals checked by `Settings::apply_env_overrides` so users
+    // can see at a glance which a11y/compat overrides fired.
+    println!();
+    println!("{}", "Terminal Quirks:".bold());
+    let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
+    let term_program_lc = term_program.to_ascii_lowercase();
+    let mut any_quirk = false;
+    if matches!(term_program.as_str(), "vscode" | "ghostty") {
+        println!(
+            "  {} TERM_PROGRAM={} → low_motion + fancy_animations=false (auto)",
+            "•".truecolor(sky_r, sky_g, sky_b),
+            term_program
+        );
+        any_quirk = true;
+    }
+    if term_program == "Termius"
+        || std::env::var_os("SSH_CLIENT").is_some_and(|v| !v.is_empty())
+        || std::env::var_os("SSH_TTY").is_some_and(|v| !v.is_empty())
+    {
+        println!(
+            "  {} SSH/Termius session → low_motion + fancy_animations=false (auto, #1433)",
+            "•".truecolor(sky_r, sky_g, sky_b)
+        );
+        any_quirk = true;
+    }
+    if term_program_lc.contains("ptyxis")
+        || std::env::var_os("PTYXIS_VERSION").is_some_and(|v| !v.is_empty())
+    {
+        println!(
+            "  {} Ptyxis detected → synchronized_output=off (auto, v0.8.31)",
+            "•".truecolor(sky_r, sky_g, sky_b)
+        );
+        any_quirk = true;
+    }
+    if !any_quirk {
+        println!(
+            "  {} no env-driven terminal-quirk overrides active",
+            "·".dimmed()
+        );
     }
 
     // Platform and sandbox checks
@@ -3445,6 +3662,7 @@ async fn run_mcp_command(config: &Config, command: McpCommand) -> Result<()> {
                     required: false,
                     enabled_tools: Vec::new(),
                     disabled_tools: Vec::new(),
+                    headers: std::collections::HashMap::new(),
                 },
             );
             save_mcp_config(&config_path, &cfg)?;
@@ -3530,6 +3748,7 @@ async fn run_mcp_command(config: &Config, command: McpCommand) -> Result<()> {
                     required: false,
                     enabled_tools: Vec::new(),
                     disabled_tools: Vec::new(),
+                    headers: std::collections::HashMap::new(),
                 },
             );
             save_mcp_config(&config_path, &cfg)?;
@@ -4327,6 +4546,7 @@ async fn run_exec_agent(
         skills_dir: config.skills_dir(),
         instructions: config.instructions_paths(),
         project_context_pack_enabled: config.project_context_pack_enabled(),
+        translation_enabled: false,
         max_steps: 100,
         max_subagents,
         features: config.features(),
@@ -4338,11 +4558,16 @@ async fn run_exec_agent(
         max_spawn_depth: crate::tools::subagent::DEFAULT_MAX_SPAWN_DEPTH,
         network_policy,
         snapshots_enabled: config.snapshots_config().enabled,
+        snapshots_max_workspace_bytes: config
+            .snapshots_config()
+            .max_workspace_gb
+            .saturating_mul(1024 * 1024 * 1024),
         lsp_config,
         runtime_services: crate::tools::spec::RuntimeToolServices::default(),
         subagent_model_overrides: config.subagent_model_overrides(),
         memory_enabled: config.memory_enabled(),
         memory_path: config.memory_path(),
+        vision_config: config.vision_model_config(),
         strict_tool_mode: config.strict_tool_mode.unwrap_or(false),
         triadmind_mode: config.triadmind_mode(),
         goal_objective: None,
@@ -4352,6 +4577,12 @@ async fn run_exec_agent(
         .tag()
         .to_string(),
         workshop: config.workshop.clone(),
+        search_provider: config
+            .search
+            .as_ref()
+            .and_then(|s| s.provider)
+            .unwrap_or_default(),
+        search_api_key: config.search.as_ref().and_then(|s| s.api_key.clone()),
     };
 
     let engine_handle = spawn_engine(engine_config, config);
@@ -4373,6 +4604,7 @@ async fn run_exec_agent(
             allow_shell: auto_approve || config.allow_shell(),
             trust_mode,
             auto_approve,
+            translation_enabled: false,
             approval_mode: if auto_approve {
                 crate::tui::approval::ApprovalMode::Auto
             } else {
@@ -5365,6 +5597,7 @@ mod doctor_mcp_tests {
             required: false,
             enabled_tools: Vec::new(),
             disabled_tools: Vec::new(),
+            headers: std::collections::HashMap::new(),
         }
     }
 

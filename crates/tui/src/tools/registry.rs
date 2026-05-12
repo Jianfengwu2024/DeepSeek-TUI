@@ -475,6 +475,36 @@ impl ToolRegistryBuilder {
         self.with_tool(Arc::new(DiagnosticsTool))
     }
 
+    /// Include the `pandoc_convert` tool only when the `pandoc`
+    /// binary is present on this host. Same probe-then-decide
+    /// pattern v0.8.31 introduced for Python — when pandoc is
+    /// missing the tool is not registered, so the model never
+    /// sees a binary it can't actually use.
+    #[must_use]
+    pub fn with_pandoc_tools(self) -> Self {
+        if crate::dependencies::resolve_pandoc().is_some() {
+            use super::pandoc::PandocConvertTool;
+            self.with_tool(Arc::new(PandocConvertTool))
+        } else {
+            self
+        }
+    }
+
+    /// Include the `image_ocr` tool only when the `tesseract`
+    /// binary is present on this host. Probe-then-decide mirroring
+    /// `with_pandoc_tools` — when tesseract is missing the tool
+    /// stays out of the catalog, so the model never tries to call
+    /// an OCR engine the host can't actually run.
+    #[must_use]
+    pub fn with_image_ocr_tools(self) -> Self {
+        if crate::dependencies::resolve_tesseract().is_some() {
+            use super::image_ocr::ImageOcrTool;
+            self.with_tool(Arc::new(ImageOcrTool))
+        } else {
+            self
+        }
+    }
+
     /// Include the `load_skill` tool (#434) so the model can pull a
     /// SKILL.md body + companion file list into context with one
     /// call instead of `read_file` + `list_dir` against the path
@@ -584,6 +614,14 @@ impl ToolRegistryBuilder {
             .with_tool(Arc::new(FetchUrlTool))
             .with_tool(Arc::new(FinanceTool::new()))
             .with_tool(Arc::new(WebRunTool))
+    }
+
+    /// Register the `image_analyze` vision tool.
+    /// Only registered when `[vision_model]` is configured in config.toml.
+    #[must_use]
+    pub fn with_vision_tools(self, config: crate::config::VisionModelConfig) -> Self {
+        use crate::vision::tools::ImageAnalyzeTool;
+        self.with_tool(Arc::new(ImageAnalyzeTool::new(config)))
     }
 
     /// Previously registered the OpenAI-style `multi_tool_use.parallel`
@@ -732,7 +770,9 @@ impl ToolRegistryBuilder {
             .with_validation_tools()
             .with_tool_result_retrieval_tool()
             .with_runtime_task_tools()
-            .with_revert_turn_tool();
+            .with_revert_turn_tool()
+            .with_pandoc_tools()
+            .with_image_ocr_tools();
 
         if allow_shell {
             builder.with_shell_tools()
