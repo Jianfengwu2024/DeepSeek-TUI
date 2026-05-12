@@ -5,6 +5,522 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.8.32] - 2026-05-12
+
+A "more useful tools" release. v0.8.31 made the tool surface
+reliable on every host; v0.8.32 expands it. Anchor is the question
+every new contributor asks: "what does the model actually have to
+work with?" — and the answer is now closer to "everything you'd
+reach for from a shell, including the document formats the real
+world uses." Five new tools (`pdf-extract` swap, `js_execution`,
+`pandoc_convert`, `image_ocr`, `image_analyze`), six community PR
+harvests targeting model-protocol bugs (vLLM thinking) and UX
+papercuts (Shift+Enter on Windows VSCode, mention truncation
+splitting CJK codepoints, approval modal hiding the transcript),
+and a snapshot-self-disable on workspaces over 2 GB of
+non-excluded content so first-turn `git add -A` no longer hangs
+the TUI on multi-hundred-GB project directories.
+
+### Performance
+
+- **Move `instructions = [...]`, user memory, and session goal
+  below the prompt's volatile-content boundary so DeepSeek's KV
+  prefix cache survives mid-session edits** (harvested from PR
+  #1345 by **@Duducoco**). Before this change, the per-workspace
+  `instructions` block, the user memory file (`/memory`), and the
+  current session goal (`/goal`) were rendered at position 2.5
+  in the system prompt — inside the static prefix layer that the
+  cache hits. Any edit to those files (or any `# foo`
+  quick-add to memory) busted the cached prefix from that byte
+  onwards, forcing the next turn to re-tokenize the rest of the
+  static layer. Relocating them to position 6 (immediately above
+  the previous-session handoff block) means the cache hit covers
+  the entire static prefix — mode, project context, env, skills,
+  context management, compact template — regardless of how often
+  the user edits their memory file. Skills, context management,
+  and the compact template stay always-cacheable in the static
+  layer where they belong.
+
+### Removed
+
+- **Shift-to-bypass-mouse-capture is gone.** The #376 escape-hatch
+  feature (hold Shift while moving the mouse → temporarily disable
+  alt-screen mouse capture so terminal-native text selection works,
+  then re-enable on release) was causing visible scroll/redraw
+  thrash: every Shift transition flipped the mouse-capture mode AND
+  pushed a status toast ("Native selection — release Shift to
+  return" / "Mouse capture restored"). On modern terminals that
+  honor `xterm-modifyOtherKeys` the toast cycle fired on stray
+  Shift events and produced what users described as a "scroll
+  demon." Removing the bypass path entirely: text selection in
+  alt-screen sessions now goes through the same path as any other
+  TUI (your terminal's modifier-bypass — typically Option/Alt on
+  macOS, Shift in some Linux terminals — still works at the
+  terminal level, this just stops us from second-guessing it).
+
+### Fixed
+
+- **Snapshots no longer try to index a multi-hundred-GB workspace
+  on first turn.** Reported by users running `deepseek-tui` inside
+  project directories with hundreds of GB of content — datasets,
+  model weights (`.safetensors`, `.gguf`, `.pt`), Docker image
+  dumps, parquet / arrow caches — where the side-git snapshot
+  initialization would hang the TUI for minutes or hours while
+  `git add -A` walked the workspace. v0.8.32 adds a default
+  2 GB ceiling on non-excluded workspace content (measured before
+  any git work, walking the same excludes the snapshot path
+  already honors). When the cap is exceeded the side repo isn't
+  initialized; subsequent snapshots are skipped with a clear
+  WARN-level log line referencing the new
+  `[snapshots] max_workspace_gb` config knob users can raise (or
+  set to `0` to disable the cap entirely and restore v0.8.31
+  behaviour). The bounded estimator also early-exits past 200k
+  file entries, so a workspace full of tiny files trips the cap
+  before paying for a full walk. Pre-existing v0.8.27 fixes for
+  the growth-over-time angle (#1112: retention cap, mid-session
+  prune, expanded built-in excludes) continue to apply; this
+  closes the orthogonal "snapshots-too-big-to-start" path.
+- **Toast stack overlay no longer renders on top of the composer
+  input** (harvested from PR #1485 by **@MeAiRobot**). When a
+  deferred tool's schema auto-loaded after the model requested
+  it, the resulting status toast ("Auto-loaded deferred tool
+  'edit_file' after model request.") could render at
+  `footer_area.y - 1` — which on tight layouts is the bottom row
+  of the composer area, visibly overwriting the start of the
+  user's typed text. `render_toast_stack_overlay` now clamps
+  `max_above` to the gap between `composer_area.y +
+  composer_area.height` and `footer_area.y`, so when the composer
+  and footer are adjacent the overlay collapses to zero rows and
+  the toast is suppressed rather than drawn on top.
+- **`/sessions` picker highlights the selected row more strongly
+  in dark terminals** (harvested from PR #1493 by **@reidliu41**).
+  Previously the selection background was subtle enough to lose
+  in low-contrast dark themes; keyboard navigation up/down didn't
+  obviously change which row was active. The selected row now
+  uses a bolded label on a stronger background so the focused row
+  reads cleanly across the dark palettes the TUI ships with.
+- **TUI input no longer freezes while long-running shell jobs
+  flood stdout** (#1299, harvested from PR #1494 by
+  **@CrepuscularIRIS / autoghclaw**). The job-panel refresh path
+  was calling `full_output()` from inside the `ShellManager`
+  mutex, which cloned the entire accumulated stdout/stderr buffer
+  every 2.5 seconds. For browser-automation or large-build jobs
+  the buffer grew unboundedly; cloning held the mutex for
+  O(total_bytes) time, starving the `crossterm::event::poll` loop
+  and dropping keystrokes. The refresh now reads only the last
+  `max_tail_chars * 4` bytes under the lock (lock hold time is
+  O(1) regardless of total output volume) and decodes those into
+  a tail string for display. `stdout_len` / `stderr_len` still
+  report the true total byte counts so no caller invariant
+  breaks. Also tightens `take_delta_from_buffer` to slice
+  `[cursor..total]` inside the lock guard instead of cloning the
+  whole buffer first, and skips UTF-8 continuation bytes at
+  `tail_start` so `from_utf8_lossy` never emits a leading U+FFFD
+  in the job panel.
+- **`@`-mention truncation no longer splits multi-byte UTF-8
+  sequences** (#1441, harvested from PR #1495 by
+  **@CrepuscularIRIS / autoghclaw**). When `@`-mentioning a file
+  larger than 128 KB the composer truncated the buffer at exactly
+  `MAX_MENTION_FILE_BYTES`, which on CJK / emoji content landed
+  mid-codepoint and produced a stray U+FFFD at the cut point. The
+  truncator now uses `str::from_utf8(...).error_len()` to detect
+  the incomplete-tail case and rounds down to the last valid
+  codepoint boundary before decoding. Genuinely invalid UTF-8
+  files still surface the "file is not UTF-8" error (the rounding
+  is only applied when the error is an incomplete tail, not a
+  real decoding failure mid-buffer).
+- **vLLM provider: `reasoning_effort = "off"` now actually
+  disables thinking on Qwen3 / DeepSeek-R1 servers, cutting
+  TTFT from ~13s to ~270ms** (harvested from PR #1480 by
+  **@h3c-hexin**). The vLLM branch of `apply_reasoning_effort`
+  was injecting `thinking: {type: "disabled"}` at the top of
+  the request body — but vLLM speaks OpenAI's chat-completions
+  protocol, not Anthropic-native fields, and silently ignored
+  the directive. The model then emitted a full hidden reasoning
+  trace into the non-standard `reasoning` field (which this
+  client doesn't surface), so users saw a multi-second freeze
+  before any content token arrived. The vLLM branch now emits
+  the OpenAI extension `chat_template_kwargs.enable_thinking`
+  (which vLLM forwards into the model's chat template — the
+  canonical way to toggle Qwen3's `<think>...</think>` mode).
+  Measurement against vLLM + Qwen3.6-35B-A3B-FP8: TTFT
+  13039ms → 274ms, total LLM call 13s → 5.7s. The `high` /
+  `max` effort levels likewise switch to the OpenAI extension.
+  No change for non-vLLM providers.
+- **`/sessions` picker no longer shows `<turn_meta>` as the
+  session title** (harvested from PR #1498 by **@wdw8276**).
+  `session_manager::create_saved_session_with_id_and_mode`
+  picked the first text content block off the user message via
+  `find_map`; the engine prepends an internal `<turn_meta>` block
+  ahead of the real user text, so the picker rendered that
+  metadata blob as the session name. Guard added so titles fall
+  through to the actual user input. Existing sessions without
+  the prefix block are unaffected.
+- **Kitty keyboard protocol now activates on Windows (VSCode +
+  Windows Terminal), so `Shift+Enter` inserts a newline instead
+  of submitting** (#1359, harvested from PR #1483 by
+  **@CrepuscularIRIS / autoghclaw**). Root cause: crossterm's
+  `PushKeyboardEnhancementFlags` gates the escape sequence on
+  `is_ansi_code_supported()`, which on Windows queries the
+  console mode rather than the VT capability and unconditionally
+  returns false — so the Kitty push (`\x1b[>1u`) was never
+  written, leaving xterm.js in legacy mode where `Shift+Enter`
+  and `Enter` both produce `\r` and are indistinguishable.
+  `Alt+Enter` / `Ctrl+J` were affected the same way. The fix
+  writes the push and pop escapes directly under `#[cfg(windows)]`,
+  bypassing the capability gate; terminals that don't speak the
+  protocol silently discard the sequences. Also extends the
+  pop-on-exit path to two missed call sites (the `main.rs` panic
+  hook and `external_editor.rs::spawn_editor_for_input`) so a
+  crash or `$EDITOR` invocation can no longer leave the parent
+  shell's keyboard state corrupted.
+- **Approval modal can be collapsed to a one-line banner with
+  Tab** (harvested from PR #1455 by **@tiger-dog**). Previously the
+  approval prompt rendered as a full-screen takeover that hid the
+  transcript behind it, so users had to dismiss the modal just to
+  remember which tool call they were being asked to approve. Tab
+  now toggles between the takeover card and a single-line bottom
+  banner — the rest of the conversation stays visible while the
+  decision is pending. Tab again restores the full card; the
+  selection state is preserved across the toggle.
+- **Markdown renderer no longer eats underscores inside
+  identifiers** (harvested from PR #1455 by **@tiger-dog**). The
+  inline parser was matching `_italic_` against the underscore in
+  `deepseek_tui` / `foo_bar_baz` and rendering the second half of
+  the identifier in italic, which made transcript snippets that
+  named code symbols read as garbled prose. Both `_italic_` and
+  `*italic*` now apply a CommonMark-style boundary check on the
+  closing delimiter — when the next character is a letter, digit,
+  or underscore, the delimiter is treated as literal text instead
+  of markup. Regression-pinned with cases like `crate deepseek_tui
+  handles approvals` and `look at *not_emphasised*tail`.
+
+### Added
+
+- **npm wrapper installs cleanly on OpenHarmony / HarmonyPC**
+  (#1072, harvested from PR #1499 by **@CrepuscularIRIS /
+  autoghclaw**). `os.platform()` returns `openharmony` on
+  HarmonyPC and on OpenHarmony's Linux ABI-compatible userspace,
+  but the npm wrapper's platform-asset matrix only covered
+  `linux` / `darwin` / `win32`, so `npm i -g deepseek-tui` would
+  abort with `Unsupported platform: openharmony` even though the
+  Linux x64 / arm64 binaries run unchanged on that environment.
+  Added a `PLATFORM_ALIASES` mapping that resolves `openharmony`
+  to the `linux` asset family before lookup so install succeeds
+  on those hosts. The error message for genuinely unsupported
+  platforms still reports the raw platform name (`freebsd`,
+  etc.) so OS-mismatch reports stay diagnostic.
+- **Startup empty-state shows useful context instead of
+  repeating the header** (harvested from PR #1444 by
+  **@reidliu41**). The center of the welcome view used to repeat
+  information already displayed in the header and footer. It now
+  shows the build version, the active model with a `/model`
+  hint, and the current working directory so first-time users
+  have somewhere to look while they decide what to type.
+- **Opt-in `v4-best-practices` bundled skill** (harvested from
+  PR #1448 by **@SamhandsomeLee**). A single 50-line `SKILL.md`
+  encoding three V4-specific workflow rules for multi-step
+  thinking-mode tasks. Each rule maps to a concrete observable
+  failure class. Discovered through the existing
+  `crates/tui/assets/skills/...` mechanism alongside the
+  `skill-creator` skill — not enabled by default; users opt in
+  via the standard `/skills` UI.
+- **`image_analyze` tool — vision-model image understanding**
+  (harvested from PR #1467 by **@MMMarcinho**). Sends an image
+  file to an OpenAI-compatible vision endpoint and returns the
+  model's natural-language description. Complements `image_ocr`:
+  use `image_ocr` for "what text is on this image", `image_analyze`
+  for "what is this image about". **Opt-in only** — gated by both
+  the `[features] vision_model = true` flag and a `[vision_model]`
+  config block specifying `model` (and optionally `api_key` /
+  `base_url`). Default configuration ships the feature flag at
+  `false`, so no install sees vision API calls fire without an
+  explicit two-step opt-in. **Billing**: each call hits the
+  configured vision endpoint (OpenAI by default), so usage is
+  billed by the third-party provider; calls are stateless (no
+  conversation context attached). Workspace-boundary check: the
+  tool rejects absolute paths and any `..` parent-dir traversal
+  before any base64 encoding or API call. To disable later: set
+  `[features] vision_model = false` (or omit `[vision_model]`).
+  Supports PNG, JPEG, GIF, WebP, and BMP inputs.
+- **`image_ocr` tool — extract text from images via local
+  tesseract.** Lets the model OCR a screenshot, scanned receipt,
+  whiteboard photo, or image-only PDF the user drops into the
+  workspace, without bouncing through `exec_shell`. Spawns
+  `tesseract <image> -` and returns the recognised text inline;
+  no file is written. PNG / JPEG / TIFF inputs supported.
+  Registration is gated on `dependencies::resolve_tesseract()`;
+  when tesseract is missing the tool isn't advertised, so the
+  model never tries to call an OCR engine the host can't run.
+  `deepseek doctor` reports tesseract status alongside the other
+  external-binary dependencies with platform-aware install hints
+  (`brew install tesseract` / `apt install tesseract-ocr` /
+  `winget install UB-Mannheim.TesseractOCR`). For non-default
+  language packs or PSM modes, users can still drop into
+  `exec_shell` with the full tesseract CLI surface.
+- **`pandoc_convert` tool — convert documents between formats via
+  the local pandoc binary.** Pandoc is the Swiss Army knife the
+  real world uses for moving prose around — Markdown to HTML,
+  HTML to Markdown, reST to anything, anything to DOCX / EPUB /
+  LaTeX — and surfacing it as a model-callable tool unblocks
+  "rewrite this report as ..." / "publish this changelog as ..."
+  workflows that previously needed the user to drop into a
+  terminal between turns. Curated target whitelist of 11 formats
+  (markdown, gfm, commonmark, html, rst, latex, docx, odt, epub,
+  plain, asciidoc) so the model can't ask for `pdf` (would need
+  LaTeX) or typos like `markown`. Binary targets (docx, odt,
+  epub) require an `output_path`; text targets can return the
+  converted text inline. Approval routes through the WritesFiles
+  / Suggest tier on every call. Registration is gated on
+  `dependencies::resolve_pandoc()`; `deepseek doctor` surfaces
+  the binary's status with platform-aware install hints.
+- **`js_execution` tool — execute model-provided JavaScript via a
+  local Node.js runtime.** Mirrors `code_execution` (Python) so
+  the model has a single consistent surface for "run this snippet
+  locally and tell me what it printed" across both interpreters.
+  Same tempfile-spawn pattern, same 120-second timeout, same
+  stdout/stderr/return_code result shape — so prompt-cache
+  layouts that cover one tool also cover the other. Registration
+  is gated on `crate::dependencies::resolve_node()`: when Node is
+  missing the tool is simply not advertised, so the model never
+  sees a runtime it can't actually use. `deepseek doctor` reports
+  Node availability under "Tool Dependencies" with platform-aware
+  install hints (`brew install node` / `apt install nodejs` /
+  `winget install OpenJS.NodeJS`). Approval routes through the
+  same Suggest tier as `code_execution`.
+- **`/translate` opt-in: respond in the user's UI locale, with a
+  post-hoc fallback for English that leaks through** (harvested
+  from PR #1462 by **@YaYII**). Two-layer design: when the user
+  enables translation via the `/translate` slash command, a
+  `## Language Output Requirement` block is appended to the
+  system prompt instructing the model to reply in the resolved
+  session locale (Simplified Chinese, Traditional Chinese,
+  Japanese, or Brazilian Portuguese — code identifiers and
+  user-requested English code blocks are exempt). For replies
+  that still surface English despite the directive, a heuristic
+  in `tui::translation` (Latin-vs-CJK character ratio with
+  weighting for CJK information density) detects the leak and
+  invokes a focused per-message translation API call to render
+  the localised version before display. Both layers are off by
+  default and have no effect on installs that don't enable them.
+  Trust-boundary scope: opt-in only, system prompt addition is
+  conditional on the runtime flag, no model behaviour change for
+  English-locale users.
+- **AtlasCloud is now a first-class provider** (harvested from
+  PR #1436 by **@lucaszhu-hue**). AtlasCloud hosts the V4 family
+  (and other DeepSeek-compatible models) on its own endpoint at
+  `https://api.atlascloud.ai/v1`, and several contributors had
+  been running it through the OpenAI-compatible passthrough with
+  manual `base_url` / model overrides. Selecting
+  `provider = "atlascloud"` in `~/.deepseek/config.toml` (or via
+  `DEEPSEEK_PROVIDER=atlascloud`) now wires up the documented
+  defaults, a `[providers.atlascloud]` config block for per-user
+  api_key / base_url / model / http_headers overrides, the
+  `ATLASCLOUD_API_KEY` env var path, and the
+  provider-picker / `/provider` slash command entries — same
+  shape as the existing NVIDIA NIM / Fireworks / OpenAI provider
+  rows. Default remains DeepSeek; nothing changes for installs
+  that don't opt in.
+- **`web_search` supports Tavily and Bocha as configurable
+  backends** (harvested from PR #1294 by **@sandofree**). DuckDuckGo
+  with Bing fallback remains the default — no API key required —
+  but users in regions where those scrapers are unreliable can now
+  set `[search] provider = "tavily" | "bocha"` plus
+  `api_key = "..."` in `config.toml` (or via the
+  `DEEPSEEK_SEARCH_PROVIDER` / `DEEPSEEK_SEARCH_API_KEY` env vars)
+  to route every `web_search` call through the chosen API. Tavily
+  is an AI-search API targeted at general use; Bocha is the
+  mainland-China-friendly equivalent. Trust-boundary pins: an
+  unset `api_key` on an opted-in provider surfaces a clear
+  `ToolError` naming the missing key rather than silently falling
+  through to a different provider, the network policy gate
+  (`[network]`) is consulted for the provider host on every call,
+  and the default path is unchanged so no install sees provider
+  behaviour change unless they explicitly opt in.
+- **`/change` slash command** displays the most recent
+  CHANGELOG.md version section from inside the TUI, so users can
+  see what they just upgraded into without leaving the chat
+  (harvested from PR #1416 by **@zhuangbiaowei**). The command
+  works against the bundled release-notes copy when no workspace
+  CHANGELOG is available, and on non-English locales it requests
+  a model-side translation of the section so localised users see
+  the changelog in their UI language. Pure offline fallback when
+  no API key is configured.
+
+### Fixed
+
+- **`deepseek update` now refreshes the companion TUI binary
+  alongside the dispatcher** (harvested from PR #1492 by
+  **@NorethSea**). Closes the documented two-binary footgun:
+  `~/.cargo/bin/deepseek` would update to the latest dispatcher,
+  but `~/.cargo/bin/deepseek-tui` would stay at the previously
+  installed version, so users saw the dispatcher report a new
+  release while the TUI runtime they actually interacted with
+  reported the old version. Most painful for Volta-managed npm
+  installs and any maintainer flow that calls `update` instead of
+  re-running both `cargo install --path crates/{cli,tui}`. The
+  updater now enumerates colocated binaries up front, downloads
+  and verifies every release asset before replacing anything,
+  then swaps the sibling first and the running dispatcher last so
+  a partial network failure cannot leave the launcher updated
+  while the TUI remains stale.
+
+### Changed
+
+- **`read_file` now extracts PDFs in pure Rust by default — no
+  Poppler install required.** Before v0.8.32 the PDF path shelled
+  out to `pdftotext` (Poppler), so first-time users on hosts without
+  it saw `read_file` return a `binary_unavailable` sentinel and had
+  to `brew install poppler` / `apt install poppler-utils` before
+  the model could open a PDF. The bundled `pdf-extract` crate
+  (which already powered URL-fetched PDFs in `web_run`) now drives
+  the local `read_file` path too. The `pages` parameter still
+  filters by 1-indexed inclusive page range; both the whole-file
+  and per-page variants run with no system dependency. Users with
+  column-heavy or complex-table PDFs (academic papers, financial
+  filings) where `pdftotext -layout` still wins can opt into the
+  external path with `prefer_external_pdftotext = true` in
+  `~/.config/deepseek/settings.toml` — when set, the previous
+  Poppler dispatch (and the `binary_unavailable` install hint when
+  the binary is missing) returns. `deepseek doctor` now reports
+  `pdftotext` as optional and explains how to opt in instead of
+  framing it as a missing dependency.
+
+## [0.8.31] - 2026-05-12
+
+A "tools that actually work" release. `code_execution` no longer
+fails on Windows hosts where `python3` isn't on `PATH` — we probe
+for the interpreter at catalog-build time and only advertise the
+tool when one resolves, so the model never sees a runtime it can't
+actually use. The new `deepseek doctor` "Tool Dependencies" and
+"Terminal Quirks" sections surface external-binary status and
+active env-driven overrides so flicker / motion / missing-tool
+puzzles answer themselves before a bug report gets filed. Ptyxis
+50.x users on Ubuntu 26.04 get a manual `synchronized_output = off`
+knob plus auto-detection that opts them out of the DEC 2026
+synchronized-output wrap their VTE 0.84 mishandles. The CNB Cool
+mirror workflow is rewritten with concurrency and scoped pushes so
+release tags reliably reach `cnb.cool/deepseek-tui.com/DeepSeek-TUI`
+for users behind GitHub-blocking networks. Plus a new auto-close
+workflow that closes contributor PRs whose code has been harvested
+into `main`, so credit lands at the same moment the fix does.
+
+### Fixed
+
+- **Windows `exec_shell` preserves MSVC toolchain env** (harvested
+  from PR #1487 by **@Jianfengwu2024**). When the parent shell has
+  already loaded `VsDevCmd` / `vcvars` (Developer Command Prompt,
+  the standard way to run Rust + MSVC on Windows), `exec_shell` was
+  stripping `LIB` / `LIBPATH` / `INCLUDE` and the related VS / SDK /
+  CRT root variables on its way to the child. That made
+  model-driven `cargo build` calls fail to resolve `kernel32.lib`
+  even though `link.exe` was reachable via `PATH`. The allowlist
+  in `child_env.rs` now preserves the 13 MSVC env vars so the
+  toolchain context survives the sanitisation pass.
+- **`code_execution` no longer fails with "program not found" on
+  Windows** (and any other host without `python3` on `PATH`). Before
+  v0.8.31 the tool hardcoded `python3` and was unconditionally
+  advertised in Agent / YOLO modes — so the model would call it,
+  spawn would fail, and the error surfaced as a generic tool failure
+  with no upstream hint. The fix probes for a Python interpreter
+  (`python3` → `python` → `py -3`) at catalog-build time, caches the
+  resolved interpreter, and only advertises `code_execution` when one
+  resolves. On hosts with no Python the tool is not registered at all
+  — the model never sees a tool it can't actually run. Reported by a
+  Windows contributor; resolver lives at
+  `crates/tui/src/dependencies.rs` and is also surfaced by
+  `deepseek doctor`. Folds in the contributor's "write code to a
+  tempfile and run the file" suggestion at the same time, so multiline
+  code with quote nesting no longer round-trips through `python3 -c`.
+- **Termius and every SSH session auto-enable low-motion**
+  (#1433, harvested from PR #1479 by **@CrepuscularIRIS / autoghclaw**).
+  Termius desktop sets `TERM_PROGRAM=Termius`; sshd exports
+  `SSH_CLIENT` for every TCP session and `SSH_TTY` for interactive
+  PTY logins. Any of those signals now flips `low_motion` and
+  `fancy_animations` like the existing VS Code / Ghostty path, so
+  the 120 FPS cursor-repositioning that races the SSH round-trip
+  no longer flickers a remote TUI. Disk-loaded `fancy_animations =
+  true` is unconditionally overridden under these signals,
+  matching the existing env-precedence contract.
+- **DEC 2026 synchronized output is auto-disabled on Ptyxis** (the new
+  default terminal on Ubuntu 26.04 and an increasingly common Linux
+  TUI host). Ptyxis 50.x ships on VTE 0.84.x, which parses the
+  `\x1b[?2026h` / `\x1b[?2026l` begin/end pair but still flashes the
+  entire viewport on every wrapped frame instead of deferring
+  rendering — so a TUI that uses DEC 2026 to avoid tearing
+  experiences visible flicker on every redraw. gnome-terminal 3.58
+  on the same VTE renders cleanly, so the heuristic must stay narrow:
+  we trigger only on `TERM_PROGRAM` matching `ptyxis`
+  case-insensitively, or `PTYXIS_VERSION` set to any non-empty value.
+  Either signal flips the new `synchronized_output` setting from
+  `auto` to `off`; the renderer then skips the begin/end pair on
+  every draw, in `reset_terminal_viewport`, and in `resume_terminal`.
+  Users on Ptyxis who upgrade past the upstream fix (or who want to
+  confirm a fix landed) can override with
+  `/set synchronized_output on` or by adding
+  `synchronized_output = "on"` to `~/.config/deepseek/settings.toml`.
+
+### Added
+
+- **`deepseek doctor` now reports tool-dependency status.** A new
+  "Tool Dependencies" section lists which external binaries the
+  registered tools rely on, with ✓ when present and ✗ + an
+  install hint when missing. Today this covers the Python
+  interpreter (`code_execution`) and `pdftotext` (`read_file` PDF
+  path). A separate "Terminal Quirks" section shows which env-driven
+  auto-overrides (VS Code / Ghostty / Termius / SSH / Ptyxis) are
+  currently active so users can see at a glance why a particular
+  rendering compromise is in effect. Foundation for surfacing future
+  tool dependencies as the toolset grows.
+- **New `synchronized_output` setting** controls whether the renderer
+  wraps each frame in DEC mode 2026 synchronized output. Accepts
+  `auto` (default; respect the Ptyxis env opt-out), `on` (always emit
+  DEC 2026, override the heuristic), or `off` (never emit DEC 2026).
+  The cost of `off` is brief tearing on terminals that handle DEC
+  2026 cleanly; it is purely a rendering-quality knob, not a
+  correctness one. Set via `/set synchronized_output <auto|on|off>`
+  or in `~/.config/deepseek/settings.toml`.
+- **`read_file` accepts `start_line` and `max_lines`** for chunked,
+  bounded reads of large files (#1450, harvested from PR #1451 by
+  **@Oliver-ZPLiu**). Default window is 200 lines / ~16 KB; the hard
+  cap is 500 lines. Small files (≤ 200 lines AND ≤ 16 KB) still
+  return their contents unchanged, so existing prompts that read
+  config files / single source files see no behavior change. Large
+  files now return a `<file …>`-wrapped, line-numbered window with
+  `shown_lines`, `truncated`, and `next_start_line` attributes plus
+  a `[TRUNCATED]` continuation hint — so the model can page through
+  a 50 KB file in 16 KB slices instead of dragging the whole thing
+  into the conversation context on every turn. PDFs continue to use
+  `pages`; `start_line` / `max_lines` apply to text files only.
+- **`web/` dependency security updates.** Bumps:
+  - `next` 15.5.16 → 15.5.18 (GHSA-26hh-7cqf-hhc6 — App Router
+    middleware/proxy bypass via segment-prefetch routes; high
+    severity).
+  - `mermaid` 11.14.0 → 11.15.0 (GHSA family: Gantt-chart infinite-
+    loop DoS, `classDef` HTML injection, `classDefs` /
+    configuration CSS injection; all medium severity).
+  - `eslint-config-next` 15.5.16 → 15.5.18 (matches Next.js).
+  `npm run build` confirmed clean on the bumped lockfile. None of
+  these affect the Rust TUI binary; the bumps are for the
+  separately-deployed `deepseek-tui.com` site.
+- **MCP HTTP servers accept custom headers** for authentication
+  (#1454, harvested from PR #1456 by **@Oliver-ZPLiu**). Mirrors the
+  `headers` field that Claude Code, Codex, and OpenCode already
+  accept in their MCP config — add e.g.
+  `"headers": { "Authorization": "Bearer ${HF_TOKEN}" }` under any
+  HTTP server entry in `~/.deepseek/mcp.json` and the headers are
+  sent on every Streamable HTTP request. Headers are sent
+  literally — env-var interpolation is a follow-up, so tokens
+  pasted directly into mcp.json live there as plain text. The
+  Streamable HTTP transport filters out empty keys, framing
+  overrides (`Accept`, `Content-Type`), and CR/LF in values
+  (response-splitting defense) so a single bad entry can't break
+  protocol negotiation or smuggle a header through a misbehaving
+  proxy. Stdio servers (`command`-based) and the legacy SSE
+  transport ignore the field; SSE coverage is a follow-up.
+
 ## [0.8.30] - 2026-05-11
 
 A "tighten what we shipped" release. Bare single-letter keystrokes
@@ -3185,7 +3701,8 @@ Welcome — and thank you.
 - Hooks system and config profiles
 - Example skills and launch assets
 
-[Unreleased]: https://github.com/Hmbown/DeepSeek-TUI/compare/v0.8.30...HEAD
+[Unreleased]: https://github.com/Hmbown/DeepSeek-TUI/compare/v0.8.31...HEAD
+[0.8.31]: https://github.com/Hmbown/DeepSeek-TUI/compare/v0.8.30...v0.8.31
 [0.8.30]: https://github.com/Hmbown/DeepSeek-TUI/compare/v0.8.29...v0.8.30
 [0.8.29]: https://github.com/Hmbown/DeepSeek-TUI/compare/v0.8.28...v0.8.29
 [0.8.28]: https://github.com/Hmbown/DeepSeek-TUI/compare/v0.8.27...v0.8.28

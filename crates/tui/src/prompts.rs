@@ -24,6 +24,10 @@ pub struct PromptSessionContext<'a> {
     /// disk I/O happens inside the prompt builder, so the workspace-
     /// static portion of the system prompt stays cache-friendly.
     pub locale_tag: &'a str,
+    /// When true, a ## Language Output Requirement block is appended
+    /// to the system prompt instructing the model to respond in
+    /// the resolved session locale.
+    pub translation_enabled: bool,
 }
 
 /// Conventional location for the structured session-handoff artifact (#32).
@@ -38,6 +42,48 @@ pub const HANDOFF_RELATIVE_PATH: &str = ".deepseek/handoff.md";
 /// its own. Files larger than this are truncated with an `[…elided]`
 /// marker rather than skipped entirely so the model still sees the head.
 const INSTRUCTIONS_FILE_MAX_BYTES: usize = 100 * 1024;
+
+/// System prompt block appended when `translation_enabled` is true.
+/// Instructs the model to respond in the resolved session locale for all
+/// natural-language output — explanations, summaries, conversation.
+/// Code identifiers, untranslatable technical terms, and explicitly
+/// requested English code blocks are exempt.
+fn translation_output_instruction(locale_tag: &str) -> String {
+    let target_language = translation_target_language_for_tag(locale_tag);
+    format!(
+        "\
+## Language Output Requirement\n\
+\n\
+The user requires all responses in {target_language}. \
+Always respond in {target_language} — use natural, professional language for all \
+explanations, code comments, summaries, and conversational turns. \
+Only output English for:\n\
+- Code identifiers (variable names, function names, file paths)\n\
+- Technical terms that lack a standard translation in {target_language}\n\
+- Code blocks the user explicitly requests in English\n\n\
+This is a hard display requirement: the user does not read English, \
+so any English prose in your response will block their decision-making."
+    )
+}
+
+fn translation_target_language_for_tag(locale_tag: &str) -> &'static str {
+    let normalized = locale_tag.trim().to_ascii_lowercase();
+    if normalized.starts_with("ja") {
+        "Japanese (日本語)"
+    } else if normalized.starts_with("zh-hant")
+        || normalized.contains("-tw")
+        || normalized.contains("-hk")
+        || normalized.contains("-mo")
+    {
+        "Traditional Chinese (繁體中文)"
+    } else if normalized.starts_with("zh") {
+        "Simplified Chinese (简体中文)"
+    } else if normalized.starts_with("pt") {
+        "Brazilian Portuguese (Português do Brasil)"
+    } else {
+        "English"
+    }
+}
 
 /// Render a `## Environment` block listing the resolved locale tag,
 /// runtime version, host platform, login shell, and current working directory.
@@ -494,6 +540,7 @@ pub fn system_prompt_for_mode_with_context_and_skills(
             goal_objective: None,
             project_context_pack_enabled: true,
             locale_tag: "en",
+            translation_enabled: false,
         },
     )
 }
@@ -566,40 +613,23 @@ pub fn system_prompt_for_mode_with_context_skills_session_and_approval(
     // 2.25. Environment block — locale, platform, shell, pwd. All
     // four inputs are session-stable (workspace path is fixed for
     // the run; locale is loaded once by the caller; platform/shell
-    // come from process env). Inserted above instructions/skills so
-    // it remains in the workspace-static cache layer alongside the
-    // mode prompt and project context.
+    // come from process env). Inserted above skills so it remains in
+    // the workspace-static cache layer alongside the mode prompt and
+    // project context.
     full_prompt = format!(
         "{full_prompt}\n\n{}",
         render_environment_block(workspace, session_context.locale_tag),
     );
 
-    // 2.5a. Configured `instructions = [...]` files (#454). Loaded
-    // and concatenated in declared order. Lives above the skills
-    // block so it's part of the workspace-static layer that the KV
-    // prefix cache can hit, and so per-project overrides apply
-    // consistently turn-over-turn.
-    if let Some(paths) = instructions
-        && let Some(block) = render_instructions_block(paths)
-    {
-        full_prompt = format!("{full_prompt}\n\n{block}");
-    }
-
-    // 2.5b. User memory block (#489). Goes above skills/context-management
-    // because it's session-stable: the memory file changes when the user
-    // edits it via `/memory` or `# foo` quick-add, but not turn-over-turn.
-    if let Some(memory_block) = session_context.user_memory_block
-        && !memory_block.trim().is_empty()
-    {
-        full_prompt = format!("{full_prompt}\n\n{memory_block}");
-    }
-
-    if let Some(goal_objective) = session_context.goal_objective
-        && !goal_objective.trim().is_empty()
-    {
+    // 2.3a. Translation output instruction — when enabled, instruct
+    // the model to respond in the resolved session locale. Stays
+    // above the volatile-content boundary because it's a per-session
+    // flag, not a per-turn one: enabling `/translate` is a session
+    // toggle, so the prompt-prefix bytes don't drift turn-over-turn.
+    if session_context.translation_enabled {
         full_prompt = format!(
-            "{full_prompt}\n\n## Current Session Goal\n\n<session_goal>\n{}\n</session_goal>",
-            goal_objective.trim()
+            "{full_prompt}\n\n{}",
+            translation_output_instruction(session_context.locale_tag)
         );
     }
 
@@ -645,9 +675,45 @@ pub fn system_prompt_for_mode_with_context_skills_session_and_approval(
 
     // ── Volatile-content boundary ─────────────────────────────────────────
     // Everything below drifts mid-session and busts the prefix cache for
-    // bytes that follow. Keep new static blocks above this comment.
+    // bytes that follow. All static layers (mode, project context, env,
+    // skills, context management, compact template) live above this line
+    // so DeepSeek's KV prefix cache can hit on the entire system prompt
+    // regardless of per-session edits to memory, goals, or instructions.
 
-    // 6. Previous-session handoff (file-backed, rewritten by `/compact`).
+    // 6a. Configured `instructions = [...]` files (#454). Loaded
+    // and concatenated in declared order. Placed below the volatile boundary
+    // because these files are workspace-scoped and may differ between
+    // sessions; any edit to them would otherwise bust the prefix cache for
+    // all subsequent static layers.
+    if let Some(paths) = instructions
+        && let Some(block) = render_instructions_block(paths)
+    {
+        full_prompt = format!("{full_prompt}\n\n{block}");
+    }
+
+    // 6b. User memory block (#489). Placed below the volatile boundary
+    // because memory entries are editable mid-session via `/memory` or
+    // `# foo` quick-add. When they change, they only invalidate the
+    // trailing handoff block — the static prefix above stays cached.
+    if let Some(memory_block) = session_context.user_memory_block
+        && !memory_block.trim().is_empty()
+    {
+        full_prompt = format!("{full_prompt}\n\n{memory_block}");
+    }
+
+    // 6c. Current session goal. Also volatile: users set / change goals
+    // during a session via `/goal`. Placed below the boundary for the
+    // same reason as memory.
+    if let Some(goal_objective) = session_context.goal_objective
+        && !goal_objective.trim().is_empty()
+    {
+        full_prompt = format!(
+            "{full_prompt}\n\n## Current Session Goal\n\n<session_goal>\n{}\n</session_goal>",
+            goal_objective.trim()
+        );
+    }
+
+    // 7. Previous-session handoff (file-backed, rewritten by `/compact`).
     if let Some(handoff_block) = load_handoff_block(workspace) {
         full_prompt = format!("{full_prompt}\n\n{handoff_block}");
     }
@@ -790,6 +856,7 @@ mod tests {
                 goal_objective: None,
                 project_context_pack_enabled: false,
                 locale_tag: "zh-Hans",
+                translation_enabled: false,
             },
             ApprovalMode::Suggest,
         ) {
@@ -858,6 +925,7 @@ mod tests {
                 goal_objective: None,
                 project_context_pack_enabled: false,
                 locale_tag: "zh-Hans",
+                translation_enabled: false,
             },
             ApprovalMode::Suggest,
         ) {
@@ -901,6 +969,7 @@ mod tests {
                 goal_objective: None,
                 project_context_pack_enabled: false,
                 locale_tag: "en",
+                translation_enabled: false,
             },
             ApprovalMode::Suggest,
         ) {
@@ -989,6 +1058,7 @@ mod tests {
                 goal_objective: None,
                 project_context_pack_enabled: true,
                 locale_tag: "ja",
+                translation_enabled: false,
             },
         ) {
             SystemPrompt::Text(text) => text,
@@ -1014,6 +1084,7 @@ mod tests {
                 goal_objective: None,
                 project_context_pack_enabled: false,
                 locale_tag: "en",
+                translation_enabled: false,
             },
         ) {
             SystemPrompt::Text(text) => text,
@@ -1040,6 +1111,7 @@ mod tests {
                 goal_objective: None,
                 project_context_pack_enabled: true,
                 locale_tag: "en",
+                translation_enabled: false,
             },
         ) {
             SystemPrompt::Text(text) => text,
@@ -1220,7 +1292,7 @@ mod tests {
     }
 
     #[test]
-    fn session_goal_is_injected_above_handoff_tail() {
+    fn session_goal_is_injected_below_compact_template() {
         let tmp = tempdir().expect("tempdir");
         let prompt = match system_prompt_for_mode_with_context_skills_and_session(
             AppMode::Agent,
@@ -1233,6 +1305,7 @@ mod tests {
                 goal_objective: Some("Fix transcript corruption"),
                 project_context_pack_enabled: true,
                 locale_tag: "en",
+                translation_enabled: false,
             },
         ) {
             SystemPrompt::Text(text) => text,
@@ -1243,7 +1316,11 @@ mod tests {
         let compact_pos = prompt.find("## Compaction Handoff").expect("compact block");
 
         assert!(prompt.contains("Fix transcript corruption"));
-        assert!(goal_pos < compact_pos);
+        // Session goal is volatile content — it lives below the
+        // volatile-content boundary (after the compact template) so
+        // per-session goal changes don't bust the prefix cache for
+        // static layers.
+        assert!(compact_pos < goal_pos);
         assert!(!prompt.contains("src/lib.rs"));
     }
 
@@ -1261,6 +1338,7 @@ mod tests {
                 goal_objective: Some("   "),
                 project_context_pack_enabled: true,
                 locale_tag: "en",
+                translation_enabled: false,
             },
         ) {
             SystemPrompt::Text(text) => text,

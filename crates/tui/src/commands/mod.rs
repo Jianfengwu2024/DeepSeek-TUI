@@ -5,6 +5,7 @@
 
 mod anchor;
 mod attachment;
+mod change;
 mod config;
 mod core;
 mod cycle;
@@ -369,6 +370,12 @@ pub const COMMANDS: &[CommandInfo] = &[
         description_id: MessageId::CmdTokensDescription,
     },
     CommandInfo {
+        name: "translate",
+        aliases: &["translation", "transale"],
+        usage: "/translate",
+        description_id: MessageId::CmdTranslateDescription,
+    },
+    CommandInfo {
         name: "system",
         aliases: &[],
         usage: "/system",
@@ -385,6 +392,12 @@ pub const COMMANDS: &[CommandInfo] = &[
         aliases: &[],
         usage: "/diff",
         description_id: MessageId::CmdDiffDescription,
+    },
+    CommandInfo {
+        name: "change",
+        aliases: &[],
+        usage: "/change",
+        description_id: MessageId::CmdChangeDescription,
     },
     CommandInfo {
         name: "undo",
@@ -555,9 +568,13 @@ pub fn execute(cmd: &str, app: &mut App) -> CommandResult {
         "logout" => config::logout(app),
 
         // Debug commands
+        "translate" | "translation" | "transale" => core::translate(app),
         "tokens" => debug::tokens(app),
         "cost" => debug::cost(app),
         "cache" => debug::cache(app, arg),
+
+        // ChangeLog command
+        "change" => change::change(app),
         "system" => debug::system_prompt(app),
         "context" | "ctx" => debug::context(app),
         "edit" => debug::edit(app),
