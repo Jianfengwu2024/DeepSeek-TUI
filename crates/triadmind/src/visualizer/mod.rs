@@ -12,13 +12,13 @@
 //! @LeftBranch: generate_triad_visualizer, render_html
 //! @RightBranch: VisualizerOptions, KnowledgeNode, KnowledgeEdge
 
-pub mod types;
 pub mod graph;
 pub mod render;
+pub mod types;
 
 #[cfg(test)]
 mod tests;
 
-pub use types::{GraphStats, KnowledgeEdge, KnowledgeNode, VisualizerGraph, VisualizerOptions};
 pub use graph::build_knowledge_graph;
 pub use render::{generate_triad_visualizer, render_html};
+pub use types::{GraphStats, KnowledgeEdge, KnowledgeNode, VisualizerGraph, VisualizerOptions};

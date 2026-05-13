@@ -122,7 +122,11 @@ pub struct ProtocolAction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
     /// Parent node id for `create_child`.
-    #[serde(rename = "parentNodeId", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "parentNodeId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub parent_node_id: Option<String>,
     /// New node definition for `create_child`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,10 +164,18 @@ pub struct MacroSplit {
     #[serde(rename = "rightBranch", default)]
     pub right_branch: Vec<String>,
     /// The recommended operation for the triadization focus.
-    #[serde(rename = "recommendedOperation", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "recommendedOperation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub recommended_operation: Option<String>,
     /// The vertex goal description.
-    #[serde(rename = "vertexGoal", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "vertexGoal",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub vertex_goal: Option<String>,
 }
 
@@ -333,9 +345,13 @@ pub enum ProtocolValidationError {
         confidence: f64,
         minimum: f64,
     },
-    #[error("protocol must contain all three splits (macro, meso, micro) to validate focus stability")]
+    #[error(
+        "protocol must contain all three splits (macro, meso, micro) to validate focus stability"
+    )]
     IncompleteSplits,
-    #[error("{stage} triadization focus drifted: expected '{expected}' -> '{expected_op}', got '{actual}' -> '{actual_op}'")]
+    #[error(
+        "{stage} triadization focus drifted: expected '{expected}' -> '{expected_op}', got '{actual}' -> '{actual_op}'"
+    )]
     FocusDrift {
         stage: String,
         expected: String,
@@ -388,12 +404,33 @@ fn validate_triadization_focus_rules(
     _context: &ProtocolValidationContext,
 ) -> Result<(), ProtocolValidationError> {
     let splits: Vec<(&str, Option<&dyn TriadizationFocusReference>)> = vec![
-        ("macroSplit", protocol.macro_split.as_ref().map(|s| s as &dyn TriadizationFocusReference)),
-        ("mesoSplit", protocol.meso_split.as_ref().map(|s| s as &dyn TriadizationFocusReference)),
-        ("microSplit", protocol.micro_split.as_ref().map(|s| s as &dyn TriadizationFocusReference)),
+        (
+            "macroSplit",
+            protocol
+                .macro_split
+                .as_ref()
+                .map(|s| s as &dyn TriadizationFocusReference),
+        ),
+        (
+            "mesoSplit",
+            protocol
+                .meso_split
+                .as_ref()
+                .map(|s| s as &dyn TriadizationFocusReference),
+        ),
+        (
+            "microSplit",
+            protocol
+                .micro_split
+                .as_ref()
+                .map(|s| s as &dyn TriadizationFocusReference),
+        ),
     ];
 
-    let present: Vec<_> = splits.iter().filter_map(|(name, split)| split.map(|s| (*name, s))).collect();
+    let present: Vec<_> = splits
+        .iter()
+        .filter_map(|(name, split)| split.map(|s| (*name, s)))
+        .collect();
 
     if present.is_empty() {
         return Ok(());
@@ -439,14 +476,18 @@ fn validate_topology_rules(
         match action.op {
             TriadOp::Reuse => {
                 let node_id = action.node_id.as_deref().ok_or_else(|| {
-                    ProtocolValidationError::ParseError(format!("action[{index}] reuse missing node_id"))
+                    ProtocolValidationError::ParseError(format!(
+                        "action[{index}] reuse missing node_id"
+                    ))
                 })?;
                 ensure_existing_node(&existing_node_map, node_id, index)?;
                 ensure_unique_target(&mut action_target_ids, node_id, index)?;
             }
             TriadOp::Modify => {
                 let node_id = action.node_id.as_deref().ok_or_else(|| {
-                    ProtocolValidationError::ParseError(format!("action[{index}] modify missing node_id"))
+                    ProtocolValidationError::ParseError(format!(
+                        "action[{index}] modify missing node_id"
+                    ))
                 })?;
                 let existing = ensure_existing_node(&existing_node_map, node_id, index)?;
                 ensure_unique_target(&mut action_target_ids, node_id, index)?;
@@ -475,7 +516,9 @@ fn validate_topology_rules(
                 ensure_existing_node(&existing_node_map, parent_node_id, index)?;
 
                 let new_node = action.node.as_ref().ok_or_else(|| {
-                    ProtocolValidationError::ParseError(format!("action[{index}] create_child missing node"))
+                    ProtocolValidationError::ParseError(format!(
+                        "action[{index}] create_child missing node"
+                    ))
                 })?;
 
                 if existing_node_map.contains_key(new_node.node_id.as_str()) {
@@ -521,7 +564,11 @@ fn ensure_unique_target(
 }
 
 fn normalize_text(value: &str) -> String {
-    value.trim().split_whitespace().collect::<Vec<_>>().join(" ")
+    value
+        .trim()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // ── Node Reference Parsing ──────────────────────────────────────────
@@ -539,15 +586,22 @@ const PREFIX_CATEGORY_MAP: &[(&str, &str)] = &[
 ];
 
 /// Parse a nodeId string (e.g. "Workflow.buildMasterPrompt") into structured parts.
-pub fn parse_node_ref(node_id: &str, category: Option<&str>) -> Result<ParsedNodeRef, ProtocolValidationError> {
+pub fn parse_node_ref(
+    node_id: &str,
+    category: Option<&str>,
+) -> Result<ParsedNodeRef, ProtocolValidationError> {
     let trimmed = node_id.trim();
     if trimmed.is_empty() {
-        return Err(ProtocolValidationError::ParseError("node_id cannot be empty".into()));
+        return Err(ProtocolValidationError::ParseError(
+            "node_id cannot be empty".into(),
+        ));
     }
 
     let raw_parts: Vec<&str> = trimmed.split('.').filter(|s| !s.is_empty()).collect();
     if raw_parts.is_empty() {
-        return Err(ProtocolValidationError::ParseError(format!("invalid node_id: {node_id}")));
+        return Err(ProtocolValidationError::ParseError(format!(
+            "invalid node_id: {node_id}"
+        )));
     }
 
     let mut resolved_category = category
@@ -561,7 +615,10 @@ pub fn parse_node_ref(node_id: &str, category: Option<&str>) -> Result<ParsedNod
     // Only strip the prefix category if we have enough remaining parts
     // to still form a class.method pair (i.e. at least 2 parts after stripping).
     if parts.len() > 2 {
-        if let Some(&(_, cat)) = PREFIX_CATEGORY_MAP.iter().find(|(prefix, _)| *prefix == first_part) {
+        if let Some(&(_, cat)) = PREFIX_CATEGORY_MAP
+            .iter()
+            .find(|(prefix, _)| *prefix == first_part)
+        {
             resolved_category = cat.to_string();
             parts = parts[1..].to_vec();
         }
@@ -596,7 +653,9 @@ pub fn parse_node_ref(node_id: &str, category: Option<&str>) -> Result<ParsedNod
 // ── Map Loading ─────────────────────────────────────────────────────
 
 /// Read the triad-map.json file and parse it into a vector of node definitions.
-pub fn read_triad_map<P: AsRef<Path>>(map_path: P) -> Result<Vec<TriadNodeDefinition>, ProtocolValidationError> {
+pub fn read_triad_map<P: AsRef<Path>>(
+    map_path: P,
+) -> Result<Vec<TriadNodeDefinition>, ProtocolValidationError> {
     let content = std::fs::read_to_string(map_path.as_ref()).map_err(|e| {
         ProtocolValidationError::ParseError(format!("failed to read triad-map.json: {e}"))
     })?;

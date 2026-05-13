@@ -1,7 +1,7 @@
 //! # Tree-Sitter Engine — Multi-language parsing backend
 //!
 //! Pattern-based source code parser that extracts triad leaf nodes.
-//! Currently supports: Rust, TypeScript (via regex).
+//! Currently supports: Rust, TypeScript, JavaScript, and Python (via regex).
 //!
 //! When the `tree-sitter` feature is enabled, uses tree-sitter grammars
 //! for precise AST-based extraction instead.
@@ -14,8 +14,8 @@ use std::path::Path;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::config::TriadLanguage;
 use super::parser_core::{LeafNode, ParserOptions};
+use crate::config::TriadLanguage;
 
 // ── Language Grammar Loading ────────────────────────────────────────
 
@@ -29,7 +29,13 @@ pub struct LanguageGrammar {
 impl LanguageGrammar {
     /// Check if a grammar is available for the given language.
     pub fn is_available(language: TriadLanguage) -> bool {
-        matches!(language, TriadLanguage::Rust | TriadLanguage::Typescript)
+        matches!(
+            language,
+            TriadLanguage::Rust
+                | TriadLanguage::Typescript
+                | TriadLanguage::Javascript
+                | TriadLanguage::Python
+        )
     }
 
     /// Try to load a grammar for the given language.
@@ -111,6 +117,8 @@ pub fn extract_nodes_for_language(
     match language {
         TriadLanguage::Rust => extract_rust_nodes(source, source_path, options),
         TriadLanguage::Typescript => extract_typescript_nodes(source, source_path, options),
+        TriadLanguage::Javascript => extract_javascript_nodes(source, source_path, options),
+        TriadLanguage::Python => extract_python_nodes(source, source_path, options),
         _ => Ok(Vec::new()),
     }
 }
@@ -126,6 +134,8 @@ fn detect_language(file_path: &Path) -> Result<TriadLanguage, anyhow::Error> {
     match ext.as_str() {
         "rs" => Ok(TriadLanguage::Rust),
         "ts" | "tsx" | "mts" | "cts" => Ok(TriadLanguage::Typescript),
+        "js" | "jsx" | "mjs" | "cjs" => Ok(TriadLanguage::Javascript),
+        "py" => Ok(TriadLanguage::Python),
         _ => Err(anyhow::anyhow!("Unsupported file extension: .{}", ext)),
     }
 }
@@ -168,9 +178,7 @@ fn extract_rust_nodes(
     let doc_lines: Vec<(usize, String)> = doc_re
         .captures_iter(source)
         .map(|cap| {
-            let line_num = source[..cap.get(0).unwrap().start()]
-                .lines()
-                .count();
+            let line_num = source[..cap.get(0).unwrap().start()].lines().count();
             (line_num, cap[1].trim().to_string())
         })
         .collect();
@@ -179,8 +187,7 @@ fn extract_rust_nodes(
         let fn_name = cap[1].to_string();
 
         // Skip test functions
-        if options.exclude_test_files
-            && (fn_name.starts_with("test_") || fn_name.contains("_test"))
+        if options.exclude_test_files && (fn_name.starts_with("test_") || fn_name.contains("_test"))
         {
             continue;
         }
@@ -345,8 +352,7 @@ fn extract_typescript_nodes(
     for cap in fn_re.captures_iter(source) {
         let fn_name = cap[1].to_string();
 
-        if options.exclude_test_files
-            && (fn_name.starts_with("test") || fn_name.ends_with("Test"))
+        if options.exclude_test_files && (fn_name.starts_with("test") || fn_name.ends_with("Test"))
         {
             continue;
         }
@@ -384,8 +390,20 @@ fn extract_typescript_nodes(
         // Skip keywords that look like method names
         if matches!(
             method_name.as_str(),
-            "if" | "for" | "while" | "switch" | "return" | "throw" | "new" | "typeof"
-                | "import" | "export" | "class" | "interface" | "type" | "enum" | "constructor"
+            "if" | "for"
+                | "while"
+                | "switch"
+                | "return"
+                | "throw"
+                | "new"
+                | "typeof"
+                | "import"
+                | "export"
+                | "class"
+                | "interface"
+                | "type"
+                | "enum"
+                | "constructor"
         ) {
             continue;
         }
@@ -449,8 +467,7 @@ fn extract_typescript_nodes(
     for cap in arrow_re.captures_iter(source) {
         let fn_name = cap[1].to_string();
 
-        if options.exclude_test_files
-            && (fn_name.starts_with("test") || fn_name.ends_with("Test"))
+        if options.exclude_test_files && (fn_name.starts_with("test") || fn_name.ends_with("Test"))
         {
             continue;
         }
@@ -476,6 +493,95 @@ fn extract_typescript_nodes(
             is_test: fn_name.contains("test") || fn_name.contains("Test"),
             is_helper,
             line: fn_line + 1,
+        });
+    }
+
+    Ok(nodes)
+}
+
+/// Extract leaf nodes from JavaScript source code.
+fn extract_javascript_nodes(
+    source: &str,
+    source_path: &str,
+    options: &ParserOptions,
+) -> Result<Vec<LeafNode>, anyhow::Error> {
+    extract_typescript_nodes(source, source_path, options)
+}
+
+/// Extract leaf nodes from Python source code.
+fn extract_python_nodes(
+    source: &str,
+    source_path: &str,
+    options: &ParserOptions,
+) -> Result<Vec<LeafNode>, anyhow::Error> {
+    let mut nodes = Vec::new();
+    let lines: Vec<&str> = source.lines().collect();
+    let class_re = Regex::new(r"^\s*class\s+([A-Za-z_]\w*)").unwrap();
+    let fn_re =
+        Regex::new(r"^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:->\s*([^:]+))?:")
+            .unwrap();
+    let mut class_stack: Vec<(usize, String)> = Vec::new();
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let indent = leading_indent_width(line);
+        while let Some((class_indent, _)) = class_stack.last() {
+            if indent <= *class_indent {
+                class_stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        if let Some(cap) = class_re.captures(line) {
+            class_stack.push((indent, cap[1].to_string()));
+            continue;
+        }
+
+        let Some(cap) = fn_re.captures(line) else {
+            continue;
+        };
+
+        let fn_name = cap[1].to_string();
+        if options.exclude_test_files
+            && (fn_name.starts_with("test_") || fn_name.ends_with("_test"))
+        {
+            continue;
+        }
+
+        let is_private = fn_name.starts_with('_') && fn_name != "__init__";
+        if options.exclude_private_methods && is_private {
+            continue;
+        }
+
+        let node_id = if let Some((_, class_name)) = class_stack.last() {
+            format!("{}.{}", class_name, fn_name)
+        } else {
+            fn_name.clone()
+        };
+
+        let problem = extract_python_problem(&lines, index);
+        let demand = extract_python_param_types(&cap[2]);
+        let answer = cap
+            .get(3)
+            .map(|m| vec![normalize_python_annotation(m.as_str())])
+            .unwrap_or_default();
+        let is_helper = is_helper_function(&fn_name, options) || is_private;
+
+        nodes.push(LeafNode {
+            node_id,
+            source_path: source_path.to_string(),
+            problem,
+            demand,
+            answer,
+            is_public: !is_helper && !is_private,
+            is_test: fn_name.contains("test"),
+            is_helper,
+            line: index + 1,
         });
     }
 
@@ -514,6 +620,42 @@ fn extract_ts_param_types(params: &str) -> Vec<String> {
     types
 }
 
+/// Extract parameter annotations from a Python signature.
+fn extract_python_param_types(params: &str) -> Vec<String> {
+    if params.trim().is_empty() {
+        return Vec::new();
+    }
+
+    params
+        .split(',')
+        .filter_map(|part| {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+
+            let without_default = trimmed
+                .split_once('=')
+                .map(|(value, _)| value.trim())
+                .unwrap_or(trimmed);
+            let without_prefix = without_default
+                .trim_start_matches('*')
+                .trim_start_matches('*')
+                .trim();
+
+            if matches!(without_prefix, "self" | "cls" | "/") {
+                return None;
+            }
+
+            if let Some((_, annotation)) = without_prefix.split_once(':') {
+                return Some(normalize_python_annotation(annotation));
+            }
+
+            Some("Any".to_string())
+        })
+        .collect()
+}
+
 // ── Shared Helpers ──────────────────────────────────────────────────
 
 /// Extract doc comment from lines preceding a function (Rust style).
@@ -539,6 +681,121 @@ fn extract_preceding_jsdoc(jsdocs: &[(usize, String)], pos: usize) -> String {
         .last()
         .map(|(_, text)| text.clone())
         .unwrap_or_default()
+}
+
+/// Extract the best available description for a Python function.
+fn extract_python_problem(lines: &[&str], def_line_index: usize) -> String {
+    extract_python_docstring(lines, def_line_index)
+        .or_else(|| extract_python_preceding_comment(lines, def_line_index))
+        .unwrap_or_default()
+}
+
+fn extract_python_docstring(lines: &[&str], def_line_index: usize) -> Option<String> {
+    let def_indent = leading_indent_width(lines[def_line_index]);
+
+    let mut index = def_line_index + 1;
+    while index < lines.len() {
+        let line = lines[index];
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            index += 1;
+            continue;
+        }
+
+        let indent = leading_indent_width(line);
+        if indent <= def_indent {
+            break;
+        }
+
+        if trimmed.starts_with('#') {
+            index += 1;
+            continue;
+        }
+
+        return parse_python_triple_quoted(lines, index);
+    }
+
+    None
+}
+
+fn parse_python_triple_quoted(lines: &[&str], start_index: usize) -> Option<String> {
+    let trimmed = lines[start_index].trim();
+    let delimiter = if trimmed.starts_with("\"\"\"") {
+        "\"\"\""
+    } else if trimmed.starts_with("'''") {
+        "'''"
+    } else {
+        return None;
+    };
+
+    let remainder = trimmed.trim_start_matches(delimiter);
+    if let Some((inline, _)) = remainder.split_once(delimiter) {
+        return Some(normalize_doc_text(inline));
+    }
+
+    let mut parts = Vec::new();
+    if !remainder.trim().is_empty() {
+        parts.push(remainder.trim().to_string());
+    }
+
+    for line in lines.iter().skip(start_index + 1) {
+        let current = line.trim();
+        if let Some((before, _)) = current.split_once(delimiter) {
+            if !before.trim().is_empty() {
+                parts.push(before.trim().to_string());
+            }
+            break;
+        }
+
+        if !current.is_empty() {
+            parts.push(current.to_string());
+        }
+    }
+
+    Some(normalize_doc_text(&parts.join(" ")))
+}
+
+fn extract_python_preceding_comment(lines: &[&str], def_line_index: usize) -> Option<String> {
+    let mut parts = Vec::new();
+    let mut index = def_line_index;
+
+    while index > 0 {
+        index -= 1;
+        let trimmed = lines[index].trim();
+        if trimmed.is_empty() {
+            if parts.is_empty() {
+                continue;
+            }
+            break;
+        }
+        if !trimmed.starts_with('#') {
+            break;
+        }
+        parts.push(trimmed.trim_start_matches('#').trim().to_string());
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        parts.reverse();
+        Some(normalize_doc_text(&parts.join(" ")))
+    }
+}
+
+fn normalize_doc_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn normalize_python_annotation(annotation: &str) -> String {
+    annotation.trim().trim_end_matches(':').trim().to_string()
+}
+
+fn leading_indent_width(line: &str) -> usize {
+    line.chars()
+        .take_while(|ch| ch.is_whitespace())
+        .map(|ch| if ch == '\t' { 4 } else { 1 })
+        .sum()
 }
 
 /// Check if a function name indicates a helper/utility function.
@@ -596,6 +853,22 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_language_javascript() {
+        assert_eq!(
+            detect_language(Path::new("src/index.js")).unwrap(),
+            TriadLanguage::Javascript
+        );
+    }
+
+    #[test]
+    fn test_detect_language_python() {
+        assert_eq!(
+            detect_language(Path::new("src/service.py")).unwrap(),
+            TriadLanguage::Python
+        );
+    }
+
+    #[test]
     fn test_parse_rust_simple_function() {
         let source = r#"
 /// Calculates the sum of two numbers.
@@ -604,13 +877,8 @@ pub fn add(a: i32, b: i32) -> i32 {
 }
 "#;
         let opts = ParserOptions::default();
-        let nodes = extract_nodes_for_language(
-            source,
-            TriadLanguage::Rust,
-            "test.rs",
-            &opts,
-        )
-        .unwrap();
+        let nodes =
+            extract_nodes_for_language(source, TriadLanguage::Rust, "test.rs", &opts).unwrap();
 
         assert_eq!(nodes.len(), 1);
         let node = &nodes[0];
@@ -635,16 +903,14 @@ impl Calculator {
 }
 "#;
         let opts = ParserOptions::default();
-        let nodes = extract_nodes_for_language(
-            source,
-            TriadLanguage::Rust,
-            "lib.rs",
-            &opts,
-        )
-        .unwrap();
+        let nodes =
+            extract_nodes_for_language(source, TriadLanguage::Rust, "lib.rs", &opts).unwrap();
 
         assert!(nodes.len() >= 2);
-        let multiply = nodes.iter().find(|n| n.node_id == "Calculator.multiply").unwrap();
+        let multiply = nodes
+            .iter()
+            .find(|n| n.node_id == "Calculator.multiply")
+            .unwrap();
         assert_eq!(multiply.demand, vec!["i32", "i32"]);
         assert_eq!(multiply.answer, vec!["i32"]);
     }
@@ -662,13 +928,8 @@ pub fn public_api(data: String) -> bool {
 "#;
         let mut opts = ParserOptions::default();
         opts.exclude_private_methods = true;
-        let nodes = extract_nodes_for_language(
-            source,
-            TriadLanguage::Rust,
-            "mod.rs",
-            &opts,
-        )
-        .unwrap();
+        let nodes =
+            extract_nodes_for_language(source, TriadLanguage::Rust, "mod.rs", &opts).unwrap();
 
         // secret_helper should be excluded (no `pub`)
         let names: Vec<&str> = nodes.iter().map(|n| n.node_id.as_str()).collect();
@@ -687,13 +948,9 @@ function handleRequest(req: Request): Response {
 }
 "#;
         let opts = ParserOptions::default();
-        let nodes = extract_nodes_for_language(
-            source,
-            TriadLanguage::Typescript,
-            "handler.ts",
-            &opts,
-        )
-        .unwrap();
+        let nodes =
+            extract_nodes_for_language(source, TriadLanguage::Typescript, "handler.ts", &opts)
+                .unwrap();
 
         assert_eq!(nodes.len(), 1);
         let node = &nodes[0];
@@ -718,13 +975,9 @@ class UserService {
 }
 "#;
         let opts = ParserOptions::default();
-        let nodes = extract_nodes_for_language(
-            source,
-            TriadLanguage::Typescript,
-            "service.ts",
-            &opts,
-        )
-        .unwrap();
+        let nodes =
+            extract_nodes_for_language(source, TriadLanguage::Typescript, "service.ts", &opts)
+                .unwrap();
 
         let create_user = nodes
             .iter()
@@ -743,17 +996,78 @@ export const fetchData = async (id: string): Promise<Data> => {
 };
 "#;
         let opts = ParserOptions::default();
-        let nodes = extract_nodes_for_language(
-            source,
-            TriadLanguage::Typescript,
-            "api.ts",
-            &opts,
-        )
-        .unwrap();
+        let nodes =
+            extract_nodes_for_language(source, TriadLanguage::Typescript, "api.ts", &opts).unwrap();
 
         let fetch = nodes.iter().find(|n| n.node_id == "fetchData").unwrap();
         assert!(fetch.problem.contains("Fetches"));
         assert_eq!(fetch.demand, vec!["string"]);
+    }
+
+    #[test]
+    fn test_parse_javascript_function_and_class_method() {
+        let source = r#"
+/**
+ * Handles request dispatch.
+ */
+export function handleRequest(req, res) {
+    return res;
+}
+
+class UserService {
+    /** Creates a new user record. */
+    createUser(name, email) {
+        return { name, email };
+    }
+}
+"#;
+        let opts = ParserOptions::default();
+        let nodes =
+            extract_nodes_for_language(source, TriadLanguage::Javascript, "service.js", &opts)
+                .unwrap();
+
+        let handle = nodes.iter().find(|n| n.node_id == "handleRequest").unwrap();
+        assert_eq!(handle.demand, vec!["any", "any"]);
+        assert!(handle.problem.contains("Handles request dispatch"));
+
+        let create = nodes
+            .iter()
+            .find(|n| n.node_id == "UserService.createUser")
+            .unwrap();
+        assert_eq!(create.demand, vec!["any", "any"]);
+    }
+
+    #[test]
+    fn test_parse_python_function_and_method() {
+        let source = r#"
+class UserService:
+    def __init__(self, repo: UserRepo):
+        self.repo = repo
+
+    def create_user(self, name: str, email: str) -> User:
+        """Create a new user."""
+        return User(name, email)
+
+def parse_payload(payload: dict) -> dict:
+    """Parse incoming payload."""
+    return payload
+"#;
+        let opts = ParserOptions::default();
+        let nodes =
+            extract_nodes_for_language(source, TriadLanguage::Python, "service.py", &opts).unwrap();
+
+        let create = nodes
+            .iter()
+            .find(|n| n.node_id == "UserService.create_user")
+            .unwrap();
+        assert_eq!(create.demand, vec!["str", "str"]);
+        assert_eq!(create.answer, vec!["User"]);
+        assert!(create.problem.contains("Create a new user"));
+
+        let parse = nodes.iter().find(|n| n.node_id == "parse_payload").unwrap();
+        assert_eq!(parse.demand, vec!["dict"]);
+        assert_eq!(parse.answer, vec!["dict"]);
+        assert!(parse.is_helper);
     }
 
     #[test]
@@ -771,10 +1085,7 @@ export const fetchData = async (id: string): Promise<Data> => {
             extract_rust_param_types("a: i32, b: String"),
             vec!["i32", "String"]
         );
-        assert_eq!(
-            extract_rust_param_types("&self, x: i32"),
-            vec!["i32"]
-        );
+        assert_eq!(extract_rust_param_types("&self, x: i32"), vec!["i32"]);
         assert_eq!(
             extract_rust_param_types("&mut self, config: &Config"),
             vec!["Config"]

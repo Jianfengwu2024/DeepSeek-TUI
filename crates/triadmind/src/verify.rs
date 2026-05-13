@@ -254,10 +254,7 @@ pub fn compute_verify_metrics(nodes: &[TriadNodeDefinition]) -> VerifyMetrics {
 
 /// Count nodes that have ghost demand entries.
 fn count_ghost_nodes(nodes: &[TriadNodeDefinition]) -> usize {
-    nodes
-        .iter()
-        .filter(|n| has_ghost_demand(n))
-        .count()
+    nodes.iter().filter(|n| has_ghost_demand(n)).count()
 }
 
 /// Check if a node has ghost demand (any demand entry starting with [Ghost:).
@@ -313,9 +310,17 @@ fn compute_ghost_in_demand_by_language(nodes: &[TriadNodeDefinition]) -> HashMap
 /// Infer language from a source file path extension.
 fn infer_language_from_path(source_path: &str) -> String {
     let lower = source_path.to_lowercase();
-    if lower.ends_with(".ts") || lower.ends_with(".tsx") || lower.ends_with(".mts") || lower.ends_with(".cts") {
+    if lower.ends_with(".ts")
+        || lower.ends_with(".tsx")
+        || lower.ends_with(".mts")
+        || lower.ends_with(".cts")
+    {
         "typescript".into()
-    } else if lower.ends_with(".js") || lower.ends_with(".jsx") || lower.ends_with(".mjs") || lower.ends_with(".cjs") {
+    } else if lower.ends_with(".js")
+        || lower.ends_with(".jsx")
+        || lower.ends_with(".mjs")
+        || lower.ends_with(".cjs")
+    {
         "javascript".into()
     } else if lower.ends_with(".py") {
         "python".into()
@@ -323,7 +328,12 @@ fn infer_language_from_path(source_path: &str) -> String {
         "go".into()
     } else if lower.ends_with(".rs") {
         "rust".into()
-    } else if lower.ends_with(".cpp") || lower.ends_with(".cc") || lower.ends_with(".cxx") || lower.ends_with(".hpp") || lower.ends_with(".h") {
+    } else if lower.ends_with(".cpp")
+        || lower.ends_with(".cc")
+        || lower.ends_with(".cxx")
+        || lower.ends_with(".hpp")
+        || lower.ends_with(".h")
+    {
         "cpp".into()
     } else if lower.ends_with(".java") {
         "java".into()
@@ -335,7 +345,10 @@ fn infer_language_from_path(source_path: &str) -> String {
 // ── Threshold Checking ──────────────────────────────────────────────
 
 /// Run all threshold checks against computed metrics.
-pub fn run_checks(metrics: &VerifyMetrics, thresholds: &VerifyThresholds) -> Vec<VerifyCheckResult> {
+pub fn run_checks(
+    metrics: &VerifyMetrics,
+    thresholds: &VerifyThresholds,
+) -> Vec<VerifyCheckResult> {
     vec![
         check_numeric_le(
             "execute_like_ratio",
@@ -373,10 +386,7 @@ pub fn run_checks(metrics: &VerifyMetrics, thresholds: &VerifyThresholds) -> Vec
             thresholds.right_only_vertices as f64,
             &format!("right_only_vertices={}", metrics.right_only_vertices),
         ),
-        check_ghost_policy(
-            metrics,
-            thresholds.ghost_policy_compliance,
-        ),
+        check_ghost_policy(metrics, thresholds.ghost_policy_compliance),
     ]
 }
 
@@ -474,10 +484,8 @@ pub fn run_verify_from_file(
 ) -> Result<VerifyReport, std::io::Error> {
     let content = std::fs::read_to_string(map_path)?;
     let trimmed = content.trim().trim_start_matches('\u{FEFF}');
-    let nodes: Vec<TriadNodeDefinition> =
-        serde_json::from_str(trimmed).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })?;
+    let nodes: Vec<TriadNodeDefinition> = serde_json::from_str(trimmed)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
     Ok(run_topology_verify(map_path, project_root, &nodes, options))
 }
@@ -571,9 +579,7 @@ mod tests {
 
     #[test]
     fn test_report_generation() {
-        let nodes = vec![
-            make_node("Svc.run", "do work", &["in"], &["out"]),
-        ];
+        let nodes = vec![make_node("Svc.run", "do work", &["in"], &["out"])];
         let report = run_topology_verify(
             "test-map.json",
             "/test/project",

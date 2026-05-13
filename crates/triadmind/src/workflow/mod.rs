@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::abstraction_memory::{
-    build_prompt_context, ensure_abstraction_memory, render_prompt_context, RecommendationInput,
+    RecommendationInput, build_prompt_context, ensure_abstraction_memory, render_prompt_context,
 };
-use crate::config::{load_triad_config, WorkspacePaths};
+use crate::config::{WorkspacePaths, load_triad_config};
 use crate::protocol::{TriadNodeDefinition, UpgradeProtocol};
 
 // ── Workflow Paths ──────────────────────────────────────────────────
@@ -120,21 +120,20 @@ pub fn write_prompt_packet(
 
     // Write draft protocol template
     let draft = build_draft_protocol(normalized_demand);
-    std::fs::write(
-        &paths.draft_file,
-        serde_json::to_string_pretty(&draft)?,
-    )?;
+    std::fs::write(&paths.draft_file, serde_json::to_string_pretty(&draft)?)?;
 
     // Build prompts
     let mut protocol_prompt = build_protocol_prompt(paths, normalized_demand, existing_nodes);
-    let mut implementation_prompt = build_implementation_prompt(paths, normalized_demand, existing_nodes);
+    let mut implementation_prompt =
+        build_implementation_prompt(paths, normalized_demand, existing_nodes);
     let pipeline_prompt = build_pipeline_prompt(paths, normalized_demand);
     let macro_prompt = build_macro_prompt(paths, normalized_demand, existing_nodes);
     let meso_prompt = build_meso_prompt(paths, normalized_demand, existing_nodes);
     let micro_prompt = build_micro_prompt(paths, normalized_demand, existing_nodes);
     let mut master_prompt = build_master_prompt(paths);
 
-    if let Some(section) = build_abstraction_memory_section(&paths.project_root, normalized_demand)? {
+    if let Some(section) = build_abstraction_memory_section(&paths.project_root, normalized_demand)?
+    {
         protocol_prompt.push_str("\n\n");
         protocol_prompt.push_str(&section);
         implementation_prompt.push_str("\n\n");
@@ -158,7 +157,10 @@ pub fn write_prompt_packet(
         demand: normalized_demand.into(),
         prompt_file: paths.prompt_file.to_string_lossy().to_string(),
         pipeline_prompt_file: paths.pipeline_prompt_file.to_string_lossy().to_string(),
-        implementation_prompt_file: paths.implementation_prompt_file.to_string_lossy().to_string(),
+        implementation_prompt_file: paths
+            .implementation_prompt_file
+            .to_string_lossy()
+            .to_string(),
         topology_node_count: existing_nodes.len(),
     })
 }
@@ -212,7 +214,12 @@ fn collect_stable_source_paths(config: &crate::config::TriadConfig) -> HashSet<S
         .topology_risk
         .mature_stable_source_paths
         .iter()
-        .map(|path| path.replace('\\', "/").trim_start_matches("./").trim_end_matches('/').to_string())
+        .map(|path| {
+            path.replace('\\', "/")
+                .trim_start_matches("./")
+                .trim_end_matches('/')
+                .to_string()
+        })
         .collect()
 }
 
@@ -516,10 +523,7 @@ mod tests {
     #[test]
     fn test_workflow_paths_construction() {
         let paths = WorkflowPaths::new("/test/project");
-        assert_eq!(
-            paths.triad_dir,
-            PathBuf::from("/test/project/.triadmind")
-        );
+        assert_eq!(paths.triad_dir, PathBuf::from("/test/project/.triadmind"));
         assert_eq!(
             paths.prompt_file,
             PathBuf::from("/test/project/.triadmind/prompt.txt")

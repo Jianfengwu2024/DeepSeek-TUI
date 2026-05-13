@@ -55,8 +55,15 @@ impl crate::tools::spec::ToolSpec for TriadmindSyncTool {
         ApprovalRequirement::Auto
     }
 
-    async fn execute(&self, input: Value, context: &ToolContext) -> Result<ToolResult, deepseek_tools::ToolError> {
-        let force = input.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+    async fn execute(
+        &self,
+        input: Value,
+        context: &ToolContext,
+    ) -> Result<ToolResult, deepseek_tools::ToolError> {
+        let force = input
+            .get("force")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let triad_dir = triad_dir(&context.workspace);
         let map_file = triad_dir.join("triad-map.json");
 
@@ -72,8 +79,14 @@ impl crate::tools::spec::ToolSpec for TriadmindSyncTool {
         let stale = if map_exists {
             // Simple staleness check: compare last modified times
             // Full sync implementation comes in Phase 2
-            let map_meta = std::fs::metadata(&map_file).map(|m| m.modified().ok()).ok().flatten();
-            let triad_meta = std::fs::metadata(&triad_dir).map(|m| m.modified().ok()).ok().flatten();
+            let map_meta = std::fs::metadata(&map_file)
+                .map(|m| m.modified().ok())
+                .ok()
+                .flatten();
+            let triad_meta = std::fs::metadata(&triad_dir)
+                .map(|m| m.modified().ok())
+                .ok()
+                .flatten();
 
             match (map_meta, triad_meta) {
                 (Some(map_time), Some(_)) => {
@@ -114,10 +127,8 @@ impl crate::tools::spec::ToolSpec for TriadmindSyncTool {
             let result = protocol::read_triad_map(&map_file);
             match result {
                 Ok(nodes) => {
-                    let categories: std::collections::HashSet<_> = nodes
-                        .iter()
-                        .filter_map(|n| n.category.as_deref())
-                        .collect();
+                    let categories: std::collections::HashSet<_> =
+                        nodes.iter().filter_map(|n| n.category.as_deref()).collect();
                     format!(
                         "TriadMind topology is up to date.\n\
                          Nodes: {}\n\
@@ -166,7 +177,11 @@ impl crate::tools::spec::ToolSpec for TriadmindVerifyTool {
         ApprovalRequirement::Auto
     }
 
-    async fn execute(&self, _input: Value, context: &ToolContext) -> Result<ToolResult, deepseek_tools::ToolError> {
+    async fn execute(
+        &self,
+        _input: Value,
+        context: &ToolContext,
+    ) -> Result<ToolResult, deepseek_tools::ToolError> {
         let triad_dir = triad_dir(&context.workspace);
         let map_file = triad_dir.join("triad-map.json");
 
@@ -184,14 +199,14 @@ impl crate::tools::spec::ToolSpec for TriadmindVerifyTool {
         // Basic quality metrics (full verify in Phase 2)
         let total = nodes.len();
         let with_fission = nodes.iter().filter(|n| n.fission.is_some()).count();
-        let by_category: std::collections::HashMap<&str, usize> = nodes.iter().fold(
-            std::collections::HashMap::new(),
-            |mut acc, n| {
-                let cat = n.category.as_deref().unwrap_or("uncategorized");
-                *acc.entry(cat).or_insert(0) += 1;
-                acc
-            },
-        );
+        let by_category: std::collections::HashMap<&str, usize> =
+            nodes
+                .iter()
+                .fold(std::collections::HashMap::new(), |mut acc, n| {
+                    let cat = n.category.as_deref().unwrap_or("uncategorized");
+                    *acc.entry(cat).or_insert(0) += 1;
+                    acc
+                });
 
         let source_files: std::collections::HashSet<_> = nodes
             .iter()
@@ -265,7 +280,11 @@ impl crate::tools::spec::ToolSpec for TriadmindRulesTool {
         ApprovalRequirement::Auto
     }
 
-    async fn execute(&self, input: Value, context: &ToolContext) -> Result<ToolResult, deepseek_tools::ToolError> {
+    async fn execute(
+        &self,
+        input: Value,
+        context: &ToolContext,
+    ) -> Result<ToolResult, deepseek_tools::ToolError> {
         let action = input
             .get("action")
             .and_then(|v| v.as_str())
@@ -276,9 +295,14 @@ impl crate::tools::spec::ToolSpec for TriadmindRulesTool {
         match action {
             "remove" => {
                 rules::remove_rules(&paths).map_err(|e| {
-                    deepseek_tools::ToolError::execution_failed(format!("Failed to remove rules: {}", e))
+                    deepseek_tools::ToolError::execution_failed(format!(
+                        "Failed to remove rules: {}",
+                        e
+                    ))
                 })?;
-                Ok(ToolResult::success("TriadMind rules removed from AGENTS.md."))
+                Ok(ToolResult::success(
+                    "TriadMind rules removed from AGENTS.md.",
+                ))
             }
             "check" => {
                 let has = rules::has_rules(&paths);
@@ -290,13 +314,14 @@ impl crate::tools::spec::ToolSpec for TriadmindRulesTool {
             _ => {
                 // install
                 let written = rules::install_always_on_rules(&paths).map_err(|e| {
-                    deepseek_tools::ToolError::execution_failed(format!("Failed to install rules: {}", e))
+                    deepseek_tools::ToolError::execution_failed(format!(
+                        "Failed to install rules: {}",
+                        e
+                    ))
                 })?;
 
-                let file_list: Vec<String> = written
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect();
+                let file_list: Vec<String> =
+                    written.iter().map(|p| p.display().to_string()).collect();
 
                 Ok(ToolResult::success(format!(
                     "TriadMind always-on rules installed.\n\nFiles written:\n{}",

@@ -265,7 +265,7 @@ fn collect_frontend_calls(
     // Match: fetch(`...`) or fetch("...") or fetch('...')
     // Also: fetch(URL, { method: "POST", ... })
     let fetch_re = Regex::new(
-        r#"fetch\(\s*(`[^`]*`|"[^"]*"|'[^']*')\s*(?:,\s*\{[^}]*method\s*:\s*"([^"]+)"[^}]*\})?"#
+        r#"fetch\(\s*(`[^`]*`|"[^"]*"|'[^']*')\s*(?:,\s*\{[^}]*method\s*:\s*"([^"]+)"[^}]*\})?"#,
     )
     .unwrap();
 
@@ -297,10 +297,7 @@ fn collect_frontend_calls(
             None
         };
 
-        let line = content[..cap.get(0).unwrap().start()]
-            .lines()
-            .count()
-            + 1;
+        let line = content[..cap.get(0).unwrap().start()].lines().count() + 1;
 
         calls.push(FrontendApiCall {
             method,
@@ -314,13 +311,15 @@ fn collect_frontend_calls(
     }
 
     // ── axios calls ───────────────────────────────────────────
-    let axios_re = Regex::new(
-        r#"axios\.(get|post|put|delete|patch)\s*\(\s*(`[^`]*`|"[^"]*"|'[^']*')"#,
-    )
-    .unwrap();
+    let axios_re =
+        Regex::new(r#"axios\.(get|post|put|delete|patch)\s*\(\s*(`[^`]*`|"[^"]*"|'[^']*')"#)
+            .unwrap();
 
     for cap in axios_re.captures_iter(content) {
-        let method = cap.get(1).map(|m| m.as_str().to_uppercase()).unwrap_or_default();
+        let method = cap
+            .get(1)
+            .map(|m| m.as_str().to_uppercase())
+            .unwrap_or_default();
         let raw_url = cap.get(2).map(|m| m.as_str()).unwrap_or("");
         let raw_path = strip_quotes(raw_url);
 
@@ -335,10 +334,7 @@ fn collect_frontend_calls(
             None
         };
 
-        let line = content[..cap.get(0).unwrap().start()]
-            .lines()
-            .count()
-            + 1;
+        let line = content[..cap.get(0).unwrap().start()].lines().count() + 1;
 
         calls.push(FrontendApiCall {
             method,
@@ -414,7 +410,8 @@ fn collect_known_routes(files: &[(String, String)]) -> Vec<KnownRoute> {
 /// Check if a file path looks like a Next.js API route handler.
 fn is_nextjs_api_route(path: &str) -> bool {
     let normalized = path.replace('\\', "/");
-    normalized.contains("/api/") && (normalized.ends_with("route.ts") || normalized.ends_with("route.tsx"))
+    normalized.contains("/api/")
+        && (normalized.ends_with("route.ts") || normalized.ends_with("route.tsx"))
 }
 
 /// Extract the API route path from a Next.js route file path.
@@ -426,7 +423,7 @@ fn extract_nextjs_route_path(file_path: &str) -> String {
     // Find `/api/` segment
     if let Some(api_pos) = normalized.find("/api/") {
         let after_api = &normalized[api_pos..]; // "/api/admin/post/route.ts"
-                                                  // Remove trailing /route.ts or /route.tsx
+        // Remove trailing /route.ts or /route.tsx
         let route_path = after_api
             .trim_end_matches("route.ts")
             .trim_end_matches("route.tsx")
@@ -452,10 +449,8 @@ fn normalize_dynamic_segments(path: &str) -> String {
 /// - `export async function GET(req: Request)`
 /// - `export function POST(req: Request)`
 fn detect_exported_methods(content: &str) -> Vec<String> {
-    let re = Regex::new(
-        r"(?m)^export\s+(?:async\s+)?function\s+(GET|POST|PUT|DELETE|PATCH)\b",
-    )
-    .unwrap();
+    let re =
+        Regex::new(r"(?m)^export\s+(?:async\s+)?function\s+(GET|POST|PUT|DELETE|PATCH)\b").unwrap();
     let mut methods = Vec::new();
     for cap in re.captures_iter(content) {
         methods.push(cap[1].to_string());
@@ -504,9 +499,7 @@ fn match_route<'a>(
 
 fn has_exact_match(call_variants: &[String], route_variants: &[String]) -> bool {
     let route_set: HashSet<&str> = route_variants.iter().map(|s| s.as_str()).collect();
-    call_variants
-        .iter()
-        .any(|v| route_set.contains(v.as_str()))
+    call_variants.iter().any(|v| route_set.contains(v.as_str()))
 }
 
 fn has_dynamic_match(call_variants: &[String], route_variants: &[String]) -> bool {
@@ -743,9 +736,15 @@ mod tests {
 
     #[test]
     fn test_is_external_domain_github() {
-        assert!(is_external_domain("https://api.github.com/repos/foo/issues"));
-        assert!(is_external_domain("https://api.github.com/repos/foo/pulls/1"));
-        assert!(is_external_domain("https://raw.githubusercontent.com/foo/bar/main/CHANGELOG.md"));
+        assert!(is_external_domain(
+            "https://api.github.com/repos/foo/issues"
+        ));
+        assert!(is_external_domain(
+            "https://api.github.com/repos/foo/pulls/1"
+        ));
+        assert!(is_external_domain(
+            "https://raw.githubusercontent.com/foo/bar/main/CHANGELOG.md"
+        ));
         assert!(!is_external_domain("/api/admin/post"));
         assert!(!is_external_domain("https://deepseek-tui.com/en"));
     }
@@ -753,8 +752,14 @@ mod tests {
     #[test]
     fn test_normalize_api_path_basic() {
         assert_eq!(normalize_api_path("/api/admin/post"), "/api/admin/post");
-        assert_eq!(normalize_api_path("https://api.github.com/repos/foo/issues?state=open"), "/repos/foo/issues");
-        assert_eq!(normalize_api_path("${BASE}/v1/chat/completions"), "/:param/v1/chat/completions");
+        assert_eq!(
+            normalize_api_path("https://api.github.com/repos/foo/issues?state=open"),
+            "/repos/foo/issues"
+        );
+        assert_eq!(
+            normalize_api_path("${BASE}/v1/chat/completions"),
+            "/:param/v1/chat/completions"
+        );
         assert_eq!(normalize_api_path("[locale]/admin"), "/:param/admin");
     }
 
@@ -791,15 +796,9 @@ export async function POST(req: Request) {
 
     #[test]
     fn test_is_nextjs_api_route() {
-        assert!(is_nextjs_api_route(
-            "web/app/api/admin/post/route.ts"
-        ));
-        assert!(is_nextjs_api_route(
-            "app/api/cron/route.tsx"
-        ));
-        assert!(!is_nextjs_api_route(
-            "web/lib/community-agent.ts"
-        ));
+        assert!(is_nextjs_api_route("web/app/api/admin/post/route.ts"));
+        assert!(is_nextjs_api_route("app/api/cron/route.tsx"));
+        assert!(!is_nextjs_api_route("web/lib/community-agent.ts"));
     }
 
     #[test]
@@ -829,10 +828,7 @@ const res = await fetch(`https://api.github.com/repos/${repo}/issues?state=open`
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].method, "GET");
         assert!(calls[0].is_external);
-        assert_eq!(
-            calls[0].external_domain.as_deref(),
-            Some("api.github.com")
-        );
+        assert_eq!(calls[0].external_domain.as_deref(), Some("api.github.com"));
     }
 
     #[test]
@@ -881,10 +877,7 @@ const res = await fetch("/api/admin/post", { method: "POST" });
         assert!(matched_edge.is_some(), "Expected a matched route edge");
 
         // Should have an ExternalApi node for GitHub
-        let external_node = result
-            .nodes
-            .iter()
-            .find(|n| n.node_type == "ExternalApi");
+        let external_node = result.nodes.iter().find(|n| n.node_type == "ExternalApi");
         assert!(external_node.is_some(), "Expected an ExternalApi node");
 
         // Should have 0 unmatched routes (GitHub call is external, not unmatched)

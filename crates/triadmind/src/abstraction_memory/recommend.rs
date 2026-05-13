@@ -7,11 +7,8 @@ pub fn recommend_abstractions(
     artifact: &AbstractionMemoryArtifact,
     input: &RecommendationInput,
 ) -> Vec<AbstractionMemoryRecommendation> {
-    let results = search_abstraction_memory(
-        artifact,
-        &input.query,
-        input.limit.saturating_mul(2).max(6),
-    );
+    let results =
+        search_abstraction_memory(artifact, &input.query, input.limit.saturating_mul(2).max(6));
     let focus_node_id = input.focus_node_id.as_deref().unwrap_or_default();
     let focus_source_path = input.focus_source_path.as_deref().unwrap_or_default();
 

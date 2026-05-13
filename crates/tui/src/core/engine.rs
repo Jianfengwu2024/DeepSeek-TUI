@@ -26,7 +26,7 @@ use crate::compaction::{
     CompactionConfig, compact_messages_safe, merge_system_prompts, should_compact,
 };
 use crate::config::{
-    ApiProvider, Config, TriadMindMode, DEFAULT_MAX_SUBAGENTS, DEFAULT_TEXT_MODEL,
+    ApiProvider, Config, DEFAULT_MAX_SUBAGENTS, DEFAULT_TEXT_MODEL, TriadMindMode,
 };
 use crate::cycle_manager::{
     CycleBriefing, CycleConfig, StructuredState, archive_cycle, build_seed_messages,
@@ -370,7 +370,8 @@ pub struct Engine {
     /// and forwarded as a synthetic user message before the next API call.
     pending_lsp_blocks: Vec<crate::lsp::DiagnosticBlock>,
     /// Optional post-edit governance plugins enabled for this engine.
-    post_edit_governance_plugins: Vec<std::sync::Arc<dyn self::governance::PostEditGovernancePlugin>>,
+    post_edit_governance_plugins:
+        Vec<std::sync::Arc<dyn self::governance::PostEditGovernancePlugin>>,
     /// Governance advisories collected during tool calls.
     pending_governance_messages: Vec<String>,
 }
@@ -2071,12 +2072,12 @@ pub(crate) mod governance;
 mod loop_guard;
 mod lsp_hooks;
 pub(crate) mod plugin_metadata;
-mod triadmind_hooks;
 mod streaming;
 mod tool_catalog;
 mod tool_execution;
 pub(crate) mod tool_plugins;
 mod tool_setup;
+mod triadmind_hooks;
 mod turn_loop;
 
 use self::approval::{ApprovalDecision, ApprovalResult, UserInputDecision};

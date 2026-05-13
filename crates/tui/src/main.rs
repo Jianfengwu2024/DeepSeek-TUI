@@ -4885,7 +4885,9 @@ mod doctor_endpoint_tests {
         };
 
         let report = doctor_host_plugins_report(&config);
-        let tool_plugins = report["tool_plugins"].as_array().expect("tool plugin array");
+        let tool_plugins = report["tool_plugins"]
+            .as_array()
+            .expect("tool plugin array");
         let governance_plugins = report["governance_plugins"]
             .as_array()
             .expect("governance plugin array");

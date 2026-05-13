@@ -264,6 +264,7 @@ pub enum MessageId {
     CmdLogoutDescription,
     CmdMcpDescription,
     CmdMemoryDescription,
+    CmdTriadmindDescription,
     CmdModeDescription,
     CmdModelDescription,
     CmdModelsDescription,
@@ -492,6 +493,7 @@ pub const ALL_MESSAGE_IDS: &[MessageId] = &[
     MessageId::CmdLogoutDescription,
     MessageId::CmdMcpDescription,
     MessageId::CmdMemoryDescription,
+    MessageId::CmdTriadmindDescription,
     MessageId::CmdModeDescription,
     MessageId::CmdModelDescription,
     MessageId::CmdModelsDescription,
@@ -908,6 +910,9 @@ fn english(id: MessageId) -> &'static str {
         MessageId::CmdLogoutDescription => "Clear API key and return to setup",
         MessageId::CmdMcpDescription => "Open or manage MCP servers",
         MessageId::CmdMemoryDescription => "Inspect or manage the persistent user-memory file",
+        MessageId::CmdTriadmindDescription => {
+            "Inspect, search, or sync TriadMind abstraction memory"
+        }
         MessageId::CmdModeDescription => {
             "Switch mode or open picker: /mode [agent|plan|yolo|1|2|3]"
         }
@@ -1278,6 +1283,7 @@ fn japanese(id: MessageId) -> Option<&'static str> {
         MessageId::CmdLogoutDescription => "API キーを消去してセットアップに戻る",
         MessageId::CmdMcpDescription => "MCP サーバを開く・管理する",
         MessageId::CmdMemoryDescription => "永続ユーザーメモリファイルを確認・管理",
+        MessageId::CmdTriadmindDescription => "TriadMind の抽象記憶を確認・検索・同期する",
         MessageId::CmdModeDescription => {
             "動作モードを切り替え、または選択画面を開く: /mode [agent|plan|yolo|1|2|3]"
         }
@@ -1615,6 +1621,7 @@ fn chinese_simplified(id: MessageId) -> Option<&'static str> {
         MessageId::CmdLogoutDescription => "清除 API 密钥并返回设置",
         MessageId::CmdMcpDescription => "打开或管理 MCP 服务器",
         MessageId::CmdMemoryDescription => "查看或管理持久用户记忆文件",
+        MessageId::CmdTriadmindDescription => "查看、搜索或同步 TriadMind 抽象记忆",
         MessageId::CmdModeDescription => "切换运行模式或打开选择器：/mode [agent|plan|yolo|1|2|3]",
         MessageId::CmdModelDescription => "切换或查看当前模型",
         MessageId::CmdModelsDescription => "列出 API 中可用的模型",
@@ -1931,6 +1938,9 @@ fn portuguese_brazil(id: MessageId) -> Option<&'static str> {
         MessageId::CmdMcpDescription => "Abrir ou gerenciar servidores MCP",
         MessageId::CmdMemoryDescription => {
             "Inspecionar ou gerenciar o arquivo persistente de memória do usuário"
+        }
+        MessageId::CmdTriadmindDescription => {
+            "Inspecionar, pesquisar ou sincronizar a memória de abstrações do TriadMind"
         }
         MessageId::CmdModeDescription => {
             "Alternar modo ou abrir seletor: /mode [agent|plan|yolo|1|2|3]"

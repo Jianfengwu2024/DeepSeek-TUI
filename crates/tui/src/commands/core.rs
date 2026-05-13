@@ -412,6 +412,16 @@ mod tests {
     }
 
     #[test]
+    fn test_help_triadmind_topic_shows_usage_and_description() {
+        let mut app = create_test_app();
+        let result = help(&mut app, Some("triadmind"));
+        let msg = result.message.expect("help topic should return message");
+        assert!(msg.contains("triadmind"));
+        assert!(msg.contains("abstraction memory"));
+        assert!(msg.contains("Usage: /triadmind memory [show|search <query>|sync|path|help]"));
+    }
+
+    #[test]
     fn test_help_pushes_overlay() {
         let mut app = create_test_app();
         assert_ne!(app.view_stack.top_kind(), Some(ModalKind::Help));

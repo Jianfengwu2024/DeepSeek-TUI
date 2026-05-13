@@ -112,11 +112,25 @@ fn build_abstraction_memory_tracks_providers_consumers_and_functions() {
         .expect("PaymentStrategy contract entry");
 
     assert_eq!(artifact.summary.scanned_source_count, 3);
-    assert_eq!(contract.kind, AbstractionMemoryEntryKind::InterfaceOrContract);
+    assert_eq!(
+        contract.kind,
+        AbstractionMemoryEntryKind::InterfaceOrContract
+    );
     assert_eq!(contract.provider_node_ids.len(), 2);
-    assert!(contract.provider_node_ids.contains(&"StripePay.execute".to_string()));
-    assert!(contract.provider_node_ids.contains(&"PaypalPay.execute".to_string()));
-    assert_eq!(contract.consumer_node_ids, vec!["PaymentRouter.route".to_string()]);
+    assert!(
+        contract
+            .provider_node_ids
+            .contains(&"StripePay.execute".to_string())
+    );
+    assert!(
+        contract
+            .provider_node_ids
+            .contains(&"PaypalPay.execute".to_string())
+    );
+    assert_eq!(
+        contract.consumer_node_ids,
+        vec!["PaymentRouter.route".to_string()]
+    );
 
     let abstract_function = artifact
         .entries
@@ -167,13 +181,17 @@ fn search_and_recommend_use_matched_terms_and_reuse_bias() {
         },
     );
     assert_eq!(recommendations.len(), 1);
-    assert_eq!(recommendations[0].suggested_usage, SuggestedUsage::ReuseFirst);
+    assert_eq!(
+        recommendations[0].suggested_usage,
+        SuggestedUsage::ReuseFirst
+    );
     assert!(!recommendations[0].rationale.is_empty());
 }
 
 #[test]
 fn prompt_context_falls_back_cleanly_when_memory_is_missing() {
-    let missing = std::env::temp_dir().join(format!("missing_abstraction_memory_{}", std::process::id()));
+    let missing =
+        std::env::temp_dir().join(format!("missing_abstraction_memory_{}", std::process::id()));
     let context = build_prompt_context(
         std::path::Path::new("triad-map.json"),
         &missing,

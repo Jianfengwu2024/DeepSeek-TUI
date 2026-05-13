@@ -4,11 +4,7 @@ use crate::protocol::TriadFission;
 
 /// Generate a Rust function skeleton from a fission triple.
 pub fn generate_rust_function(node_id: &str, fission: &TriadFission) -> String {
-    let fn_name = node_id
-        .split('.')
-        .last()
-        .unwrap_or(node_id)
-        .to_lowercase();
+    let fn_name = node_id.split('.').last().unwrap_or(node_id).to_lowercase();
     let params: Vec<String> = fission
         .demand
         .iter()
@@ -39,10 +35,7 @@ pub fn generate_rust_function(node_id: &str, fission: &TriadFission) -> String {
 
 /// Generate a TypeScript function skeleton from a fission triple.
 pub fn generate_ts_function(node_id: &str, fission: &TriadFission) -> String {
-    let fn_name = node_id
-        .split('.')
-        .last()
-        .unwrap_or(node_id);
+    let fn_name = node_id.split('.').last().unwrap_or(node_id);
     let params: Vec<String> = fission
         .demand
         .iter()

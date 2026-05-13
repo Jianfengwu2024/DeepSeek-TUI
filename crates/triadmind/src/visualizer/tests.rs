@@ -22,7 +22,12 @@ mod tests {
     #[test]
     fn test_build_knowledge_graph() {
         let nodes = vec![
-            make_node("Handler.run", "handle request", &["Service.process"], &["Response"]),
+            make_node(
+                "Handler.run",
+                "handle request",
+                &["Service.process"],
+                &["Response"],
+            ),
             make_node("Service.process", "process data", &["String"], &["Result"]),
         ];
         let opts = VisualizerOptions::default();
@@ -35,7 +40,10 @@ mod tests {
     fn test_categorize_node() {
         assert_eq!(categorize_node("HttpHandler.run", "handle"), "handler");
         assert_eq!(categorize_node("UserService.create", "service"), "service");
-        assert_eq!(categorize_node("DatabaseAdapter.connect", "adapter"), "adapter");
+        assert_eq!(
+            categorize_node("DatabaseAdapter.connect", "adapter"),
+            "adapter"
+        );
         assert_eq!(categorize_node("Core.engine", "core engine"), "core");
         assert_eq!(categorize_node("Utils.helper", "helper"), "other");
     }

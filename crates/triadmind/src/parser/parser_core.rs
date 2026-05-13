@@ -224,7 +224,10 @@ pub struct ParseResult {
 ///
 /// Walks the project directory for source files, parses each with tree-sitter,
 /// and collects leaf nodes. Capability aggregation is deferred to a later phase.
-pub fn scan_project(project_root: &Path, options: &ParserOptions) -> Result<ParseResult, anyhow::Error> {
+pub fn scan_project(
+    project_root: &Path,
+    options: &ParserOptions,
+) -> Result<ParseResult, anyhow::Error> {
     let mut leaf_nodes = Vec::new();
     let mut suppressed_leaves = Vec::new();
     let mut files_scanned = 0usize;
@@ -262,7 +265,7 @@ pub fn scan_project(project_root: &Path, options: &ParserOptions) -> Result<Pars
 
         let is_source = matches!(
             ext.as_str(),
-            "rs" | "ts" | "tsx" | "mts" | "cts"
+            "rs" | "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" | "py"
         );
 
         if !is_source {
@@ -271,16 +274,15 @@ pub fn scan_project(project_root: &Path, options: &ParserOptions) -> Result<Pars
 
         // Skip test files if configured
         if options.exclude_test_files {
-            let file_name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             if file_name.contains("test") || file_name.ends_with("_test") {
                 continue;
             }
             let path_str = path.to_string_lossy();
-            if path_str.contains("\\tests\\") || path_str.contains("/tests/")
-                || path_str.contains("\\test\\") || path_str.contains("/test/")
+            if path_str.contains("\\tests\\")
+                || path_str.contains("/tests/")
+                || path_str.contains("\\test\\")
+                || path_str.contains("/test/")
             {
                 continue;
             }
@@ -368,7 +370,8 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let tmp = std::env::temp_dir().join(format!("triadmind_golden_{}_{}", std::process::id(), n));
+        let tmp =
+            std::env::temp_dir().join(format!("triadmind_golden_{}_{}", std::process::id(), n));
         let _ = std::fs::create_dir_all(&tmp);
         for (name, content) in files {
             let path = tmp.join(name);
@@ -440,7 +443,11 @@ impl UserService {
         // main, add, subtract, UserService.create_user, UserService.find_user = 5 public nodes
         assert_eq!(result.leaf_nodes.len(), 5);
 
-        let ids: Vec<&str> = result.leaf_nodes.iter().map(|n| n.node_id.as_str()).collect();
+        let ids: Vec<&str> = result
+            .leaf_nodes
+            .iter()
+            .map(|n| n.node_id.as_str())
+            .collect();
         assert!(ids.contains(&"add"));
         assert!(ids.contains(&"subtract"));
         assert!(ids.contains(&"UserService.create_user"));
@@ -449,7 +456,11 @@ impl UserService {
         assert!(!ids.contains(&"internal_helper"));
 
         // Verify add node details
-        let add = result.leaf_nodes.iter().find(|n| n.node_id == "add").unwrap();
+        let add = result
+            .leaf_nodes
+            .iter()
+            .find(|n| n.node_id == "add")
+            .unwrap();
         assert_eq!(add.demand, vec!["i32", "i32"]);
         assert_eq!(add.answer, vec!["i32"]);
         assert!(add.problem.contains("Adds"));
@@ -523,7 +534,11 @@ export const fetchRemote = async (url: string): Promise<Data> => {
 
         assert_eq!(result.files_scanned, 4);
 
-        let ids: Vec<&str> = result.leaf_nodes.iter().map(|n| n.node_id.as_str()).collect();
+        let ids: Vec<&str> = result
+            .leaf_nodes
+            .iter()
+            .map(|n| n.node_id.as_str())
+            .collect();
         // Should include: handleRequest, UserService.createUser, UserService.deleteUser, fetchRemote
         // bootstrap is non-exported; validatePayload is helper; _hashPassword is private
         assert!(ids.contains(&"handleRequest"));
@@ -547,6 +562,102 @@ export const fetchRemote = async (url: string): Promise<Data> => {
             .unwrap();
         assert_eq!(fetch.demand, vec!["string"]);
         assert!(fetch.problem.contains("Fetches"));
+    }
+
+    #[test]
+    fn golden_javascript_simple_project() {
+        let files = [
+            (
+                "src/index.js",
+                r#"
+/**
+ * Application bootstrap.
+ */
+export function bootstrap(config) {
+    return config;
+}
+"#,
+            ),
+            (
+                "src/services.js",
+                r#"
+class UserService {
+    /** Creates a new user account. */
+    createUser(name, email) {
+        return { name, email };
+    }
+
+    _hashPassword(pw) {
+        return pw;
+    }
+}
+"#,
+            ),
+        ];
+
+        let mut opts = ParserOptions::default();
+        opts.exclude_private_methods = true;
+        let result = scan_temp_project(&files, &opts);
+
+        assert_eq!(result.files_scanned, 2);
+
+        let ids: Vec<&str> = result
+            .leaf_nodes
+            .iter()
+            .map(|n| n.node_id.as_str())
+            .collect();
+        assert!(ids.contains(&"bootstrap"));
+        assert!(ids.contains(&"UserService.createUser"));
+        assert!(!ids.contains(&"UserService._hashPassword"));
+    }
+
+    #[test]
+    fn golden_python_simple_project() {
+        let files = [
+            (
+                "src/service.py",
+                r#"
+class UserService:
+    def create_user(self, name: str, email: str) -> User:
+        """Creates a new user."""
+        return User(name, email)
+
+def run_job(job: Job) -> Result:
+    """Runs the background job."""
+    return Result()
+"#,
+            ),
+            (
+                "tests/test_service.py",
+                r#"
+def test_create_user():
+    assert True
+"#,
+            ),
+        ];
+
+        let mut opts = ParserOptions::default();
+        opts.exclude_test_files = true;
+        let result = scan_temp_project(&files, &opts);
+
+        assert_eq!(result.files_scanned, 1);
+
+        let ids: Vec<&str> = result
+            .leaf_nodes
+            .iter()
+            .map(|n| n.node_id.as_str())
+            .collect();
+        assert!(ids.contains(&"UserService.create_user"));
+        assert!(ids.contains(&"run_job"));
+
+        let run_job = result
+            .leaf_nodes
+            .iter()
+            .find(|n| n.node_id == "run_job")
+            .unwrap();
+        assert_eq!(run_job.demand, vec!["Job"]);
+        assert_eq!(run_job.answer, vec!["Result"]);
+        assert!(run_job.problem.contains("Runs the background job"));
     }
 
     #[test]

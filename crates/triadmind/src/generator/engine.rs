@@ -83,10 +83,7 @@ fn generate_modify_code(
             code
         ),
         is_new: false,
-        source_action: action
-            .reason
-            .clone()
-            .unwrap_or_else(|| "modify".into()),
+        source_action: action.reason.clone().unwrap_or_else(|| "modify".into()),
     })
 }
 

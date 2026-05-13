@@ -1213,7 +1213,9 @@ mcp_config_path = "disk-mcp.json"
         assert!(outcome.changed);
         assert_eq!(config.triadmind_mode(), TriadMindMode::Disabled);
         assert!(
-            outcome.final_message.contains("save and restart required before tool/governance changes take effect")
+            outcome
+                .final_message
+                .contains("save and restart required before tool/governance changes take effect")
         );
     }
 
@@ -1262,7 +1264,10 @@ mcp_config_path = "disk-mcp.json"
 
         assert!(outcome.changed);
         assert_eq!(config.triadmind_mode(), TriadMindMode::Advisory);
-        assert!(saved.contains("[triadmind]"), "expected triadmind table in {saved}");
+        assert!(
+            saved.contains("[triadmind]"),
+            "expected triadmind table in {saved}"
+        );
         assert!(
             saved.contains("mode = \"advisory\""),
             "expected triadmind mode in {saved}"

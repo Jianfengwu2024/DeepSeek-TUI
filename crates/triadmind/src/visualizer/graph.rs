@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::protocol::TriadNodeDefinition;
 
-use super::types::{KnowledgeEdge, KnowledgeNode, VisualizerGraph, GraphStats, VisualizerOptions};
+use super::types::{GraphStats, KnowledgeEdge, KnowledgeNode, VisualizerGraph, VisualizerOptions};
 
 /// Build a knowledge graph from triad node definitions.
 pub fn build_knowledge_graph(
@@ -12,10 +12,7 @@ pub fn build_knowledge_graph(
     options: &VisualizerOptions,
 ) -> VisualizerGraph {
     // First pass: collect all node IDs
-    let all_node_ids: HashSet<String> = nodes
-        .iter()
-        .map(|n| n.node_id.clone())
-        .collect();
+    let all_node_ids: HashSet<String> = nodes.iter().map(|n| n.node_id.clone()).collect();
 
     let mut graph_nodes: Vec<KnowledgeNode> = Vec::new();
     let mut graph_edges: Vec<KnowledgeEdge> = Vec::new();
@@ -48,11 +45,7 @@ pub fn build_knowledge_graph(
             problem: fission.problem.clone(),
             demand: fission.demand.clone(),
             answer: fission.answer.clone(),
-            source_path: node
-                .source_path
-                .as_deref()
-                .unwrap_or("")
-                .to_string(),
+            source_path: node.source_path.as_deref().unwrap_or("").to_string(),
         });
 
         // Build edges for demand dependencies
@@ -99,11 +92,7 @@ pub fn build_knowledge_graph(
 
 /// Categorize a node based on its id and problem statement.
 pub(crate) fn categorize_node(node_id: &str, problem: &str) -> String {
-    let combined = format!(
-        "{} {}",
-        node_id.to_lowercase(),
-        problem.to_lowercase()
-    );
+    let combined = format!("{} {}", node_id.to_lowercase(), problem.to_lowercase());
 
     if combined.contains("handle")
         || combined.contains("handler")
@@ -111,7 +100,9 @@ pub(crate) fn categorize_node(node_id: &str, problem: &str) -> String {
         || combined.contains("route")
     {
         "handler".into()
-    } else if combined.contains("service") || combined.contains("usecase") || combined.contains("use_case")
+    } else if combined.contains("service")
+        || combined.contains("usecase")
+        || combined.contains("use_case")
     {
         "service".into()
     } else if combined.contains("adapter")
@@ -121,7 +112,10 @@ pub(crate) fn categorize_node(node_id: &str, problem: &str) -> String {
         || combined.contains("gateway")
     {
         "adapter".into()
-    } else if combined.contains("core") || combined.contains("domain") || combined.contains("engine") {
+    } else if combined.contains("core")
+        || combined.contains("domain")
+        || combined.contains("engine")
+    {
         "core".into()
     } else {
         "other".into()
@@ -145,10 +139,9 @@ pub(crate) fn format_label(node_id: &str, problem: &str) -> String {
 pub(crate) fn is_generic_type(type_name: &str) -> bool {
     let generics = [
         "str", "string", "int", "i32", "i64", "u32", "u64", "f32", "f64", "usize", "isize",
-        "number", "bool", "boolean", "float",
-        "void", "()", "any", "unknown", "object", "array", "list",
-        "option", "result", "vec", "hashmap", "json", "request", "response",
-        "promise", "future",
+        "number", "bool", "boolean", "float", "void", "()", "any", "unknown", "object", "array",
+        "list", "option", "result", "vec", "hashmap", "json", "request", "response", "promise",
+        "future",
     ];
     let lower = type_name.to_lowercase();
     generics.contains(&lower.as_str())

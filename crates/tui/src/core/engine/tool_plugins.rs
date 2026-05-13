@@ -4,8 +4,8 @@
 //! base registry construction path. The engine evaluates a small registry of
 //! factories and lets each enabled plugin extend the `ToolRegistryBuilder`.
 
-use super::*;
 use super::plugin_metadata::{PluginDefaultState, PluginMetadata, PluginStability};
+use super::*;
 
 type ToolPluginEnabledPredicate = fn(&EngineConfig, AppMode) -> bool;
 type ToolPluginRegistrar = fn(ToolRegistryBuilder) -> ToolRegistryBuilder;

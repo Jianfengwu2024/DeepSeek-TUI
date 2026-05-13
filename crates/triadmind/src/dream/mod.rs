@@ -140,13 +140,21 @@ pub struct DreamProposal {
     /// Concrete action steps.
     pub actions: Vec<String>,
     /// Linked finding ids.
-    #[serde(rename = "linkedFindings", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "linkedFindings",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub linked_findings: Vec<String>,
     /// Supporting evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<DreamEvidence>,
     /// Optional upgrade protocol draft for this proposal.
-    #[serde(rename = "protocolDraft", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "protocolDraft",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub protocol_draft: Option<UpgradeProtocol>,
 }
 
@@ -520,8 +528,7 @@ pub fn run_dream_analysis(
     if !proposals.is_empty() {
         summary.push(format!(
             "Top proposal: {} (confidence={:.2})",
-            proposals[0].title,
-            proposals[0].confidence,
+            proposals[0].title, proposals[0].confidence,
         ));
     }
 
@@ -602,7 +609,11 @@ fn generate_proposals(
     }
 
     // Sort by confidence descending
-    proposals.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    proposals.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     proposals
 }
@@ -619,7 +630,8 @@ fn make_execute_like_proposal(
         confidence: finding.confidence,
         category: None,
         source_path: None,
-        objective: "Replace generic execute/run/handle method names with domain-specific verbs".into(),
+        objective: "Replace generic execute/run/handle method names with domain-specific verbs"
+            .into(),
         expected_outcome: "Improved code readability and clearer architecture boundaries".into(),
         actions: vec![
             "Audit all execute/run/handle methods".into(),
@@ -654,7 +666,10 @@ fn make_ghost_proposal(
         confidence: finding.confidence,
         category: None,
         source_path: None,
-        objective: format!("Resolve or remove {} ghost dependency references", ghost_count),
+        objective: format!(
+            "Resolve or remove {} ghost dependency references",
+            ghost_count
+        ),
         expected_outcome: "Clean dependency graph with only verified edges".into(),
         actions: vec![
             "Run 'triadmind sync --force' to rescan source files".into(),
@@ -667,10 +682,7 @@ fn make_ghost_proposal(
     }
 }
 
-fn make_empty_vertices_proposal(
-    id: u32,
-    finding: &DreamFinding,
-) -> DreamProposal {
+fn make_empty_vertices_proposal(id: u32, finding: &DreamFinding) -> DreamProposal {
     DreamProposal {
         id: format!("P{:03}", id),
         title: "Annotate empty vertices".into(),
@@ -720,7 +732,11 @@ fn make_fanout_proposal(
 
 fn ratio_confidence(actual: f64, threshold: f64) -> f64 {
     let delta = (actual - threshold).max(0.0);
-    let normalized = if threshold <= 0.0 { delta } else { delta / threshold };
+    let normalized = if threshold <= 0.0 {
+        delta
+    } else {
+        delta / threshold
+    };
     (0.6 + normalized * 0.25).min(0.95)
 }
 

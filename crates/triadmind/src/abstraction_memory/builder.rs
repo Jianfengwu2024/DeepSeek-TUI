@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use super::evidence::{
-    appears_as_contract, extract_abstraction_evidence, is_excluded_source,
-    load_triad_node_records, normalize_path, sanitize_id, sorted_set,
+    appears_as_contract, extract_abstraction_evidence, is_excluded_source, load_triad_node_records,
+    normalize_path, sanitize_id, sorted_set,
 };
 use super::types::{
     AbstractionMemoryArtifact, AbstractionMemoryConfig, AbstractionMemoryEntry,
@@ -214,11 +214,7 @@ impl ContractAccumulator {
     }
 
     fn primary_source_path(&self) -> String {
-        self.source_paths
-            .iter()
-            .min()
-            .cloned()
-            .unwrap_or_default()
+        self.source_paths.iter().min().cloned().unwrap_or_default()
     }
 
     fn avg_abstraction_ratio(&self) -> f64 {
@@ -260,11 +256,7 @@ impl FunctionAccumulator {
     }
 
     fn primary_source_path(&self) -> String {
-        self.source_paths
-            .iter()
-            .min()
-            .cloned()
-            .unwrap_or_default()
+        self.source_paths.iter().min().cloned().unwrap_or_default()
     }
 
     fn avg_abstraction_ratio(&self) -> f64 {
@@ -332,7 +324,10 @@ fn build_contract_entry(
     }
 }
 
-fn build_function_entry(signature: &str, accumulator: FunctionAccumulator) -> AbstractionMemoryEntry {
+fn build_function_entry(
+    signature: &str,
+    accumulator: FunctionAccumulator,
+) -> AbstractionMemoryEntry {
     let provider_count = accumulator.node_ids.len();
     let reusability_score = if provider_count >= 3 { 0.8 } else { 0.65 };
 

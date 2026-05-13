@@ -42,29 +42,29 @@
 //! | `navigate` | 前瞻性架构冲击地图生成 |
 //! | `visualizer` | 交互式 HTML 知识图谱渲染 |
 
+pub mod config;
 pub mod protocol;
 pub mod rules;
-pub mod config;
 pub mod sync;
 pub mod verify;
 
 // ── Phase 1: New module skeletons ──────────────────────────────────
 
+pub mod heal;
+pub mod navigate;
 /// Multi-language source parser (tree-sitter based).
 /// Extracts topology leaf/capability nodes from source files.
 pub mod parser;
-pub mod navigate;
-pub mod heal;
 
 /// Background architecture health analysis ("Dream Engine").
 /// Detects abstraction deficit, ghost nodes, and generates refactoring proposals.
 pub mod dream;
 
+pub mod abstraction_memory;
+pub mod generator;
 /// CI/CD governance gate checks.
 /// Enforces coverage, ghost ratio, execute-like ratio thresholds.
 pub mod govern;
-pub mod generator;
+pub mod runtime;
 pub mod visualizer;
 pub mod workflow;
-pub mod runtime;
-pub mod abstraction_memory;

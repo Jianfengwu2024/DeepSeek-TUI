@@ -32,12 +32,7 @@ mod tests {
     #[test]
     fn test_build_navigator_prompt() {
         let nodes: Vec<TriadNodeDefinition> = vec![];
-        let prompt = build_navigator_prompt(
-            Path::new("/test"),
-            "add feature X",
-            &nodes,
-            None,
-        );
+        let prompt = build_navigator_prompt(Path::new("/test"), "add feature X", &nodes, None);
         assert!(prompt.contains("add feature X"));
         assert!(prompt.contains("Navigator"));
         assert!(prompt.contains("UpgradeProtocol"));

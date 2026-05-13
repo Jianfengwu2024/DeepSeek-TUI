@@ -7,8 +7,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use crate::core::engine::EngineConfig;
+use async_trait::async_trait;
 
 /// Check whether a tool call edited files that are source files warranting
 /// TriadMind sync. Reuses the LSP hook's path extraction logic.
@@ -123,7 +123,11 @@ fn format_triadmind_diagnostic(report: &deepseek_triadmind::verify::VerifyReport
         ),
     ];
 
-    let failures: Vec<_> = report.checks.iter().filter(|c| c.status == "fail").collect();
+    let failures: Vec<_> = report
+        .checks
+        .iter()
+        .filter(|c| c.status == "fail")
+        .collect();
     if !failures.is_empty() {
         lines.push(String::new());
         lines.push("  Issues:".to_string());

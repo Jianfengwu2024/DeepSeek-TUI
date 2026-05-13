@@ -34,8 +34,7 @@ pub fn generate_triad_visualizer(
 
 /// Render the knowledge graph as a self-contained HTML page.
 pub fn render_html(graph: &VisualizerGraph, _options: &VisualizerOptions) -> String {
-    let graph_json =
-        serde_json::to_string(graph).unwrap_or_else(|_| "{}".to_string());
+    let graph_json = serde_json::to_string(graph).unwrap_or_else(|_| "{}".to_string());
 
     format!(
         r#"<!DOCTYPE html>

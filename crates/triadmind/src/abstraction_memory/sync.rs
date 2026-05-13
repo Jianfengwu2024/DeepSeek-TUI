@@ -40,12 +40,24 @@ pub fn ensure_abstraction_memory(
     }
 
     if force || !memory_file.exists() {
-        return sync_abstraction_memory(map_file, memory_file, project_name, config, stable_source_paths);
+        return sync_abstraction_memory(
+            map_file,
+            memory_file,
+            project_name,
+            config,
+            stable_source_paths,
+        );
     }
 
     match load_abstraction_memory(memory_file) {
         Some(artifact) => Ok(artifact),
-        None => sync_abstraction_memory(map_file, memory_file, project_name, config, stable_source_paths),
+        None => sync_abstraction_memory(
+            map_file,
+            memory_file,
+            project_name,
+            config,
+            stable_source_paths,
+        ),
     }
 }
 

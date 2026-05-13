@@ -35,11 +35,13 @@ pub fn search_abstraction_memory(
     scored
         .into_iter()
         .take(limit.clamp(1, 50))
-        .map(|(score, entry, matched_terms)| AbstractionMemorySearchResult {
-            entry: entry.clone(),
-            score,
-            matched_terms,
-        })
+        .map(
+            |(score, entry, matched_terms)| AbstractionMemorySearchResult {
+                entry: entry.clone(),
+                score,
+                matched_terms,
+            },
+        )
         .collect()
 }
 

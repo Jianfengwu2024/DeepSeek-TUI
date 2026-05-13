@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::*;
 use super::plugin_metadata::{PluginDefaultState, PluginMetadata, PluginStability};
+use super::*;
 
 type GovernancePluginBuilder = fn(&EngineConfig) -> Option<Arc<dyn PostEditGovernancePlugin>>;
 
@@ -42,8 +42,7 @@ pub(crate) fn post_edit_governance_registry() -> &'static [GovernancePluginFacto
     static REGISTRY: [GovernancePluginFactory; 1] = [GovernancePluginFactory {
         metadata: PluginMetadata {
             id: "triadmind",
-            description:
-                "TriadMind architecture governance advisories after successful source edits.",
+            description: "TriadMind architecture governance advisories after successful source edits.",
             stability: PluginStability::Experimental,
             default_state: PluginDefaultState::Disabled,
         },

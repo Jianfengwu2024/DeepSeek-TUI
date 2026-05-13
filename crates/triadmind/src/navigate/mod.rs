@@ -11,13 +11,11 @@
 //! @LeftBranch: run_navigator, build_navigator_prompt
 //! @RightBranch: NavigatorRunOptions, NavigatorRunResult, ImpactMapArtifact
 
-pub mod types;
 pub mod engine;
+pub mod types;
 
 #[cfg(test)]
 mod tests;
 
-pub use types::{
-    ImpactGraphSummary, ImpactMapArtifact, NavigatorRunOptions, NavigatorRunResult,
-};
 pub use engine::{build_navigator_prompt, run_navigator};
+pub use types::{ImpactGraphSummary, ImpactMapArtifact, NavigatorRunOptions, NavigatorRunResult};

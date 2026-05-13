@@ -15,11 +15,23 @@ pub struct AbstractionEvidence {
     pub signals: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub implements: Vec<String>,
-    #[serde(rename = "extendsAbstract", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "extendsAbstract",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub extends_abstract: Vec<String>,
-    #[serde(rename = "dependsOnAbstractions", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "dependsOnAbstractions",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub depends_on_abstractions: Vec<String>,
-    #[serde(rename = "abstractFunctions", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "abstractFunctions",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub abstract_functions: Vec<String>,
     #[serde(rename = "functionContractCount", default)]
     pub function_contract_count: usize,
@@ -134,7 +146,9 @@ pub(crate) fn load_triad_nodes(map_file: &Path) -> Result<Vec<TriadNodeDefinitio
     Ok(serde_json::from_str(trimmed).unwrap_or_default())
 }
 
-pub(crate) fn load_triad_node_records(map_file: &Path) -> Result<Vec<TriadNodeRecord>, anyhow::Error> {
+pub(crate) fn load_triad_node_records(
+    map_file: &Path,
+) -> Result<Vec<TriadNodeRecord>, anyhow::Error> {
     if !map_file.exists() {
         return Ok(Vec::new());
     }
@@ -294,7 +308,10 @@ pub(crate) fn appears_as_contract(name: &str, nodes: &[TriadNodeRecord]) -> bool
         .filter(|node| {
             let evidence = extract_abstraction_evidence(node);
             evidence.implements.iter().any(|item| item == name)
-                || evidence.depends_on_abstractions.iter().any(|item| item == name)
+                || evidence
+                    .depends_on_abstractions
+                    .iter()
+                    .any(|item| item == name)
                 || node
                     .fission
                     .as_ref()
@@ -337,7 +354,13 @@ pub(crate) fn sorted_set(values: &HashSet<String>) -> Vec<String> {
 pub(crate) fn sanitize_id(value: &str) -> String {
     value
         .chars()
-        .map(|ch| if ch.is_alphanumeric() { ch.to_ascii_lowercase() } else { '_' })
+        .map(|ch| {
+            if ch.is_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect::<String>()
         .trim_matches('_')
         .to_string()

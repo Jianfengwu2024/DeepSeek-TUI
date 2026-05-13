@@ -401,6 +401,22 @@ impl Settings {
             self.fancy_animations = false;
         }
 
+        // Tabby on Windows has reported width-accounting drift with the
+        // header whale chip (`🐳` / `🐋`) that can skew the full frame by a
+        // column. Treat it as a compatibility terminal: drop to the calmer
+        // animation profile and suppress the whale chip unless the user has
+        // already chosen a safer/non-default indicator.
+        if detected_tabby_terminal() {
+            self.low_motion = true;
+            self.fancy_animations = false;
+            if self.status_indicator.eq_ignore_ascii_case("whale") {
+                self.status_indicator = "off".to_string();
+            }
+            if self.synchronized_output.eq_ignore_ascii_case("auto") {
+                self.synchronized_output = "off".to_string();
+            }
+        }
+
         // Ptyxis 50.x (the new default terminal on Ubuntu 26.04) ships with
         // VTE 0.84.x which mishandles DEC mode 2026 synchronized output: the
         // begin/end pair is parsed but each wrapped frame still triggers a
@@ -862,6 +878,17 @@ pub fn detected_ptyxis_terminal() -> bool {
     matches!(std::env::var("PTYXIS_VERSION"), Ok(v) if !v.trim().is_empty())
 }
 
+/// Returns `true` when the active terminal is Tabby. We match
+/// `TERM_PROGRAM` case-insensitively and keep the heuristic narrow on
+/// purpose: the compatibility downgrade is only needed for terminals whose
+/// width accounting disagrees with the whale-status emoji.
+pub fn detected_tabby_terminal() -> bool {
+    if let Ok(program) = std::env::var("TERM_PROGRAM") {
+        return program.trim().to_ascii_lowercase().contains("tabby");
+    }
+    false
+}
+
 fn normalize_optional_background_color(value: Option<&str>) -> Option<String> {
     value.and_then(|raw| normalize_background_color_setting(raw).ok().flatten())
 }
@@ -1213,6 +1240,70 @@ mod tests {
             }
             if let Some(v) = prev_ssh_tty {
                 std::env::set_var("SSH_TTY", v);
+            }
+        }
+    }
+
+    #[test]
+    fn tabby_term_program_forces_low_motion_and_disables_whale_indicator() {
+        let _g = term_program_test_guard();
+        let prev = std::env::var_os("TERM_PROGRAM");
+        unsafe {
+            std::env::set_var("TERM_PROGRAM", "Tabby");
+        }
+        let mut settings = Settings::default();
+        assert_eq!(settings.status_indicator, "whale");
+        assert_eq!(settings.synchronized_output, "auto");
+        settings.apply_env_overrides();
+        assert!(
+            settings.low_motion,
+            "TERM_PROGRAM=Tabby must enable low_motion to reduce redraw drift"
+        );
+        assert!(
+            !settings.fancy_animations,
+            "TERM_PROGRAM=Tabby must disable fancy animations"
+        );
+        assert_eq!(
+            settings.status_indicator, "off",
+            "Tabby must suppress the whale emoji header chip"
+        );
+        assert_eq!(
+            settings.synchronized_output, "off",
+            "Tabby should opt out of DEC 2026 when still on auto"
+        );
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("TERM_PROGRAM", v),
+                None => std::env::remove_var("TERM_PROGRAM"),
+            }
+        }
+    }
+
+    #[test]
+    fn tabby_does_not_override_explicit_safe_indicator_or_sync_choice() {
+        let _g = term_program_test_guard();
+        let prev = std::env::var_os("TERM_PROGRAM");
+        unsafe {
+            std::env::set_var("TERM_PROGRAM", "tabby");
+        }
+        let mut settings = Settings {
+            status_indicator: "dots".to_string(),
+            synchronized_output: "on".to_string(),
+            ..Settings::default()
+        };
+        settings.apply_env_overrides();
+        assert_eq!(
+            settings.status_indicator, "dots",
+            "Tabby override should only suppress the default whale indicator"
+        );
+        assert_eq!(
+            settings.synchronized_output, "on",
+            "explicit synchronized_output choice must beat the Tabby heuristic"
+        );
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("TERM_PROGRAM", v),
+                None => std::env::remove_var("TERM_PROGRAM"),
             }
         }
     }

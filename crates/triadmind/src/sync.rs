@@ -14,7 +14,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::config::{should_skip_walk_path, TriadConfig, WorkspacePaths};
+use crate::config::{TriadConfig, WorkspacePaths, should_skip_walk_path};
 
 // ── Manifest Types ──────────────────────────────────────────────────
 
@@ -176,7 +176,10 @@ pub fn is_same_manifest(prev: &SyncManifest, current: &SyncManifest) -> bool {
 }
 
 /// Save a manifest to the sync cache file.
-pub fn write_manifest(paths: &WorkspacePaths, manifest: &SyncManifest) -> Result<(), std::io::Error> {
+pub fn write_manifest(
+    paths: &WorkspacePaths,
+    manifest: &SyncManifest,
+) -> Result<(), std::io::Error> {
     std::fs::create_dir_all(&paths.cache_dir)?;
     let json = serde_json::to_string_pretty(manifest)?;
     std::fs::write(&paths.sync_cache_file, json)?;
@@ -238,13 +241,15 @@ pub(crate) fn chrono_now() -> String {
         .unwrap_or_default();
     let secs = now.as_secs();
     // Simple ISO 8601 format
-    format!("{}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+    format!(
+        "{}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
         secs / 31536000 + 1970,
         (secs % 31536000) / 2592000 + 1,
         (secs % 2592000) / 86400 + 1,
         (secs % 86400) / 3600,
         (secs % 3600) / 60,
-        secs % 60)
+        secs % 60
+    )
 }
 
 #[cfg(test)]

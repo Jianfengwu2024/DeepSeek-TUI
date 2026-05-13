@@ -177,10 +177,7 @@ pub fn build_healing_prompt(
         topology_lines.join("\n")
     ));
 
-    sections.push(format!(
-        "[Runtime Error]\n```\n{}\n```",
-        error_text.trim()
-    ));
+    sections.push(format!("[Runtime Error]\n```\n{}\n```", error_text.trim()));
 
     sections.push(format!(
         "[Healing Diagnosis]\n```json\n{}\n```",
@@ -313,7 +310,10 @@ fn parse_trace_line(line: &str, project_root: &str) -> Option<TraceFrame> {
 }
 
 /// Parse a "path:line:col" format string.
-fn parse_source_location(location: &str, project_root: &str) -> (Option<String>, Option<u32>, Option<u32>) {
+fn parse_source_location(
+    location: &str,
+    project_root: &str,
+) -> (Option<String>, Option<u32>, Option<u32>) {
     let parts: Vec<&str> = location.rsplitn(3, ':').collect();
     if parts.len() < 2 {
         return (None, None, None);
@@ -355,7 +355,10 @@ struct NodeMatch {
 }
 
 /// Find the best topology node matching the trace frames.
-fn locate_best_node_match(frames: &[TraceFrame], nodes: &[TriadNodeDefinition]) -> Option<NodeMatch> {
+fn locate_best_node_match(
+    frames: &[TraceFrame],
+    nodes: &[TriadNodeDefinition],
+) -> Option<NodeMatch> {
     let mut best: Option<NodeMatch> = None;
 
     for frame in frames {
@@ -411,7 +414,8 @@ fn score_node_match(frame: &TraceFrame, node: &TriadNodeDefinition) -> u32 {
 fn classify_diagnosis(error_text: &str) -> String {
     let lower = error_text.to_lowercase();
 
-    if lower.contains("cannot find") || lower.contains("not found") || lower.contains("unresolved") {
+    if lower.contains("cannot find") || lower.contains("not found") || lower.contains("unresolved")
+    {
         "missing_dependency".into()
     } else if lower.contains("type") && (lower.contains("mismatch") || lower.contains("expected")) {
         "type_mismatch".into()
@@ -503,12 +507,7 @@ fn build_summary(
     if let Some(m) = matched {
         format!(
             "{}: {} (score={}, blast={}, {} downstream, action={})",
-            diagnosis,
-            m.node.node_id,
-            m.score,
-            blast.risk,
-            blast.downstream_count,
-            action,
+            diagnosis, m.node.node_id, m.score, blast.risk, blast.downstream_count, action,
         )
     } else {
         format!(
@@ -583,7 +582,10 @@ mod tests {
         let error = "at UserService.createUser (src/services.ts:100:5)";
         let frames = extract_trace_frames(error, Path::new("/project"));
         assert_eq!(frames.len(), 1);
-        assert_eq!(frames[0].function_name.as_deref(), Some("UserService.createUser"));
+        assert_eq!(
+            frames[0].function_name.as_deref(),
+            Some("UserService.createUser")
+        );
         assert_eq!(frames[0].source_path.as_deref(), Some("src/services.ts"));
     }
 
@@ -603,9 +605,18 @@ mod tests {
 
     #[test]
     fn test_classify_diagnosis() {
-        assert_eq!(classify_diagnosis("cannot find module 'foo'"), "missing_dependency");
-        assert_eq!(classify_diagnosis("type mismatch: expected String"), "type_mismatch");
-        assert_eq!(classify_diagnosis("contract violation in trait Foo"), "contract_violation");
+        assert_eq!(
+            classify_diagnosis("cannot find module 'foo'"),
+            "missing_dependency"
+        );
+        assert_eq!(
+            classify_diagnosis("type mismatch: expected String"),
+            "type_mismatch"
+        );
+        assert_eq!(
+            classify_diagnosis("contract violation in trait Foo"),
+            "contract_violation"
+        );
         assert_eq!(classify_diagnosis("request timed out after 30s"), "timeout");
         assert_eq!(classify_diagnosis("panic: index out of bounds"), "panic");
         assert_eq!(classify_diagnosis("something weird happened"), "unknown");
@@ -631,12 +642,7 @@ mod tests {
     #[test]
     fn test_build_healing_prompt() {
         let nodes = vec![make_node("Svc.run", "src/svc.rs")];
-        let diag = diagnose_runtime_failure(
-            Path::new("/test"),
-            "panic: boom",
-            0,
-            &nodes,
-        );
+        let diag = diagnose_runtime_failure(Path::new("/test"), "panic: boom", 0, &nodes);
         let prompt = build_healing_prompt(Path::new("/test"), "panic: boom", &diag, &nodes);
         assert!(prompt.contains("panic: boom"));
         assert!(prompt.contains("Self-Healing"));

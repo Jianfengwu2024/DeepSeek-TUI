@@ -4,7 +4,7 @@ use super::recommend::recommend_abstractions;
 use super::search::{choose_preferred_reuse, normalize_confidence};
 use super::sync::load_abstraction_memory;
 use super::types::{
-    AbstractionMemoryEntry, AbstractionMemoryEntryRef, AbstractionMemoryConfig,
+    AbstractionMemoryConfig, AbstractionMemoryEntry, AbstractionMemoryEntryRef,
     AbstractionProtocolActionCandidate, PromptMemoryContext, ProtocolActionSeed,
     RecommendationInput, ReuseActionSeed,
 };

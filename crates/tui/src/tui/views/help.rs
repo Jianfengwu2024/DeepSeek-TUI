@@ -173,9 +173,9 @@ fn build_entries(locale: Locale) -> Vec<HelpEntry> {
         );
         entries.push(HelpEntry {
             section: HelpSection::Command,
-            // Commands have no inherent ordering — fall back to alphabetical
-            // by leaning on `label.clone()` in the final sort_by_key tuple.
-            sub_rank: 0,
+            // Keep a few high-signal commands near the top of the unfiltered
+            // overlay so users see them without scrolling.
+            sub_rank: command_help_rank(command.name),
             label,
             description,
             haystack,
@@ -204,6 +204,17 @@ fn build_entries(locale: Locale) -> Vec<HelpEntry> {
     }
 
     entries
+}
+
+fn command_help_rank(name: &str) -> u8 {
+    match name {
+        "help" => 0,
+        "triadmind" => 1,
+        "memory" => 2,
+        "note" => 3,
+        "config" => 4,
+        _ => 10,
+    }
 }
 
 fn modal_block() -> Block<'static> {
@@ -679,6 +690,25 @@ mod tests {
                 entry.description
             );
         }
+    }
+
+    #[test]
+    fn triadmind_is_featured_near_top_of_unfiltered_help() {
+        let view = HelpView::new();
+        let top_command_labels: Vec<&str> = view
+            .filtered
+            .iter()
+            .filter_map(|idx| {
+                let entry = &view.entries[*idx];
+                (entry.section == HelpSection::Command).then_some(entry.label.as_str())
+            })
+            .take(8)
+            .collect();
+
+        assert!(
+            top_command_labels.contains(&"/triadmind"),
+            "expected /triadmind in the top help commands, got: {top_command_labels:?}"
+        );
     }
 
     fn buffer_text(buf: &Buffer, area: Rect) -> String {

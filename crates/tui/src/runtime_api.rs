@@ -2221,7 +2221,9 @@ mod tests {
         assert!(
             health["host_plugins"]["tool_plugins"]
                 .as_array()
-                .is_some_and(|plugins| plugins.iter().any(|plugin| plugin["id"] == "triadmind_tools"))
+                .is_some_and(|plugins| plugins
+                    .iter()
+                    .any(|plugin| plugin["id"] == "triadmind_tools"))
         );
         assert!(
             health["host_plugins"]["governance_plugins"]
@@ -2285,7 +2287,11 @@ mod tests {
         let report = runtime_host_plugins_report(&config);
         let tool = report["tool_plugins"]
             .as_array()
-            .and_then(|plugins| plugins.iter().find(|plugin| plugin["id"] == "triadmind_tools"))
+            .and_then(|plugins| {
+                plugins
+                    .iter()
+                    .find(|plugin| plugin["id"] == "triadmind_tools")
+            })
             .expect("triadmind tool plugin");
         let governance = report["governance_plugins"]
             .as_array()

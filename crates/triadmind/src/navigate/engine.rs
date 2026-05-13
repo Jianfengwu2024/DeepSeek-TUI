@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use super::types::{ImpactMapArtifact, ImpactGraphSummary, NavigatorRunOptions, NavigatorRunResult};
+use super::types::{
+    ImpactGraphSummary, ImpactMapArtifact, NavigatorRunOptions, NavigatorRunResult,
+};
 use crate::protocol::{TriadNodeDefinition, UpgradeProtocol};
 use crate::sync::chrono_now;
 
@@ -41,9 +43,8 @@ pub fn run_navigator(
     let protocol = if let Some(ref proto_path) = options.protocol_path {
         if proto_path.exists() {
             let content = std::fs::read_to_string(proto_path)?;
-            serde_json::from_str(&content).unwrap_or_else(|_| {
-                build_protocol_template(&normalized_demand, &nodes)
-            })
+            serde_json::from_str(&content)
+                .unwrap_or_else(|_| build_protocol_template(&normalized_demand, &nodes))
         } else {
             build_protocol_template(&normalized_demand, &nodes)
         }
@@ -84,10 +85,7 @@ pub fn run_navigator(
     };
 
     // Write artifacts
-    std::fs::write(
-        &impact_map_file,
-        serde_json::to_string_pretty(&artifact)?,
-    )?;
+    std::fs::write(&impact_map_file, serde_json::to_string_pretty(&artifact)?)?;
     std::fs::write(
         &impact_protocol_file,
         serde_json::to_string_pretty(&protocol)?,
@@ -95,8 +93,12 @@ pub fn run_navigator(
 
     // Build and write the navigator prompt
     if !has_real_protocol {
-        let prompt =
-            build_navigator_prompt(project_root, &normalized_demand, &nodes, options.llm.as_deref());
+        let prompt = build_navigator_prompt(
+            project_root,
+            &normalized_demand,
+            &nodes,
+            options.llm.as_deref(),
+        );
         std::fs::write(&impact_prompt_file, &prompt)?;
     }
 
@@ -114,10 +116,7 @@ pub fn run_navigator(
             ]
         } else {
             vec![
-                format!(
-                    "Navigator prompt written for '{}'",
-                    artifact.feature
-                ),
+                format!("Navigator prompt written for '{}'", artifact.feature),
                 "Run the prompt through an LLM to generate an UpgradeProtocol.".into(),
                 format!(
                     "Then place it at {} and re-run the navigator.",
@@ -135,9 +134,7 @@ pub fn build_navigator_prompt(
     existing_nodes: &[TriadNodeDefinition],
     llm_provider: Option<&str>,
 ) -> String {
-    let map_file = project_root
-        .join(".triadmind")
-        .join("triad-map.json");
+    let map_file = project_root.join(".triadmind").join("triad-map.json");
     let has_map = map_file.exists();
 
     let topology_summary = if existing_nodes.is_empty() {

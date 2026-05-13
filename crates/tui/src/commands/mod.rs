@@ -30,6 +30,7 @@ mod skills;
 mod stash;
 mod status;
 mod task;
+mod triadmind;
 mod user_commands;
 
 use crate::localization::{Locale, MessageId, tr};
@@ -239,6 +240,12 @@ pub const COMMANDS: &[CommandInfo] = &[
         aliases: &["image", "media"],
         usage: "/attach <path>",
         description_id: MessageId::CmdAttachDescription,
+    },
+    CommandInfo {
+        name: "triadmind",
+        aliases: &[],
+        usage: "/triadmind memory [show|search <query>|sync|path|help]",
+        description_id: MessageId::CmdTriadmindDescription,
     },
     CommandInfo {
         name: "task",
@@ -539,6 +546,7 @@ pub fn execute(cmd: &str, app: &mut App) -> CommandResult {
         "home" | "stats" | "overview" => core::home_dashboard(app),
         "note" => note::note(app, arg),
         "memory" => memory::memory(app, arg),
+        "triadmind" => triadmind::triadmind(app, arg),
         "attach" | "image" | "media" => attachment::attach(app, arg),
         "task" | "tasks" => task::task(app, arg),
         "jobs" | "job" => jobs::jobs(app, arg),

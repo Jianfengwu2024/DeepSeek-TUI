@@ -12,13 +12,13 @@
 //! @LeftBranch: apply_protocol, generate_code_for_action
 //! @RightBranch: GeneratorOptions, GeneratedFile, GenerationResult
 
-pub mod types;
-pub mod scaffold;
 pub mod engine;
+pub mod scaffold;
+pub mod types;
 
 #[cfg(test)]
 mod tests;
 
-pub use types::{GeneratedFile, GenerationResult, GeneratorOptions};
-pub use scaffold::{generate_rust_function, generate_ts_function};
 pub use engine::apply_protocol;
+pub use scaffold::{generate_rust_function, generate_ts_function};
+pub use types::{GeneratedFile, GenerationResult, GeneratorOptions};

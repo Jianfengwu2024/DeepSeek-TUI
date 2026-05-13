@@ -163,7 +163,10 @@ pub struct TriadParserConfig {
     pub leaf_output_file: String,
     #[serde(rename = "capabilityOutputFile", default = "default_capability_output")]
     pub capability_output_file: String,
-    #[serde(rename = "capabilityThreshold", default = "default_capability_threshold")]
+    #[serde(
+        rename = "capabilityThreshold",
+        default = "default_capability_threshold"
+    )]
     pub capability_threshold: f64,
     #[serde(rename = "excludeTestFiles", default = "default_true")]
     pub exclude_test_files: bool,
@@ -303,7 +306,10 @@ impl Default for TriadVisualizerConfig {
 /// Runtime healing configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeHealingConfig {
-    #[serde(rename = "requireHumanApprovalForContractChanges", default = "default_true")]
+    #[serde(
+        rename = "requireHumanApprovalForContractChanges",
+        default = "default_true"
+    )]
     pub require_human_approval_for_contract_changes: bool,
     #[serde(rename = "maxAutoRetries", default = "default_max_retries")]
     pub max_auto_retries: i32,
@@ -474,8 +480,7 @@ pub fn load_triad_config(paths: &WorkspacePaths) -> TriadConfig {
                 Ok(config) => config,
                 Err(_) => {
                     let mut config = TriadConfig::default();
-                    config.architecture.language =
-                        detect_project_language(&paths.project_root);
+                    config.architecture.language = detect_project_language(&paths.project_root);
                     config
                 }
             }
@@ -600,10 +605,7 @@ pub fn should_skip_walk_path(rel_path: &str) -> bool {
     let segments: Vec<&str> = normalized.split('/').collect();
 
     // Check if any segment is a hard-exclude directory
-    if segments
-        .iter()
-        .any(|s| HARD_EXCLUDE_SEGMENTS.contains(s))
-    {
+    if segments.iter().any(|s| HARD_EXCLUDE_SEGMENTS.contains(s)) {
         return true;
     }
 
@@ -639,10 +641,7 @@ pub fn create_source_path_filter<'a>(
         }
 
         // Check file extension against configured language
-        let Some(ext) = Path::new(rel_path)
-            .extension()
-            .and_then(|e| e.to_str())
-        else {
+        let Some(ext) = Path::new(rel_path).extension().and_then(|e| e.to_str()) else {
             return false;
         };
 
