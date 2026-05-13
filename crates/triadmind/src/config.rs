@@ -418,6 +418,9 @@ pub struct WorkspacePaths {
     pub healing_prompt_file: PathBuf,
     pub runtime_error_file: PathBuf,
     pub abstraction_memory_file: PathBuf,
+    pub project_abs_toolkit_file: PathBuf,
+    pub project_abs_toolkit_markdown_file: PathBuf,
+    pub project_abs_toolkit_dir: PathBuf,
     pub impact_map_file: PathBuf,
     pub impact_protocol_file: PathBuf,
     pub impact_prompt_file: PathBuf,
@@ -455,6 +458,9 @@ impl WorkspacePaths {
             healing_prompt_file: triad_dir.join("healing-prompt.md"),
             runtime_error_file: triad_dir.join("runtime-error.log"),
             abstraction_memory_file: triad_dir.join("abstraction-memory.json"),
+            project_abs_toolkit_file: triad_dir.join("project-abs-toolkit.json"),
+            project_abs_toolkit_markdown_file: triad_dir.join("project-abs-toolkit.md"),
+            project_abs_toolkit_dir: triad_dir.join("project-abs-toolkit"),
             impact_map_file: triad_dir.join("impact-map.json"),
             impact_protocol_file: triad_dir.join("impact-protocol.json"),
             impact_prompt_file: triad_dir.join("impact-prompt.md"),
@@ -694,6 +700,18 @@ mod tests {
         assert_eq!(
             paths.abstraction_memory_file,
             PathBuf::from("/test/project/.triadmind/abstraction-memory.json")
+        );
+        assert_eq!(
+            paths.project_abs_toolkit_file,
+            PathBuf::from("/test/project/.triadmind/project-abs-toolkit.json")
+        );
+        assert_eq!(
+            paths.project_abs_toolkit_markdown_file,
+            PathBuf::from("/test/project/.triadmind/project-abs-toolkit.md")
+        );
+        assert_eq!(
+            paths.project_abs_toolkit_dir,
+            PathBuf::from("/test/project/.triadmind/project-abs-toolkit")
         );
     }
 

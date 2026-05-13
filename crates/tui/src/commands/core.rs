@@ -418,7 +418,9 @@ mod tests {
         let msg = result.message.expect("help topic should return message");
         assert!(msg.contains("triadmind"));
         assert!(msg.contains("abstraction memory"));
-        assert!(msg.contains("Usage: /triadmind memory [show|search <query>|sync|path|help]"));
+        assert!(msg.contains(
+            "Usage: /triadmind <memory|toolkit> [show|search <query>|sync|path|export|reclassify <entry-id> <category> <subcategory>|reclassify-batch <entry-id> <category> <subcategory> ...|whitelist <show|add|remove|clear|path|help>|help]"
+        ));
     }
 
     #[test]

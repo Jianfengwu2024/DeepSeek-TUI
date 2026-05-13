@@ -65,6 +65,7 @@ pub mod generator;
 /// CI/CD governance gate checks.
 /// Enforces coverage, ghost ratio, execute-like ratio thresholds.
 pub mod govern;
+pub mod project_abs_toolkit;
 pub mod runtime;
 pub mod visualizer;
 pub mod workflow;

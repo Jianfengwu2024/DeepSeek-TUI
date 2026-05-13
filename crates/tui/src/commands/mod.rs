@@ -244,7 +244,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         name: "triadmind",
         aliases: &[],
-        usage: "/triadmind memory [show|search <query>|sync|path|help]",
+        usage: "/triadmind <memory|toolkit> [show|search <query>|sync|path|export|reclassify <entry-id> <category> <subcategory>|reclassify-batch <entry-id> <category> <subcategory> ...|whitelist <show|add|remove|clear|path|help>|help]",
         description_id: MessageId::CmdTriadmindDescription,
     },
     CommandInfo {

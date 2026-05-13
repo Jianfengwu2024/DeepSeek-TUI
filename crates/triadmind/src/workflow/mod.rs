@@ -20,6 +20,10 @@ use crate::abstraction_memory::{
     RecommendationInput, build_prompt_context, ensure_abstraction_memory, render_prompt_context,
 };
 use crate::config::{WorkspacePaths, load_triad_config};
+use crate::project_abs_toolkit::{
+    ProjectAbsToolkitArtifact, load_project_abs_toolkit, search_project_abs_toolkit,
+    sync_project_abs_toolkit_from_memory,
+};
 use crate::protocol::{TriadNodeDefinition, UpgradeProtocol};
 
 // ── Workflow Paths ──────────────────────────────────────────────────
@@ -132,6 +136,17 @@ pub fn write_prompt_packet(
     let micro_prompt = build_micro_prompt(paths, normalized_demand, existing_nodes);
     let mut master_prompt = build_master_prompt(paths);
 
+    if let Some(section) =
+        build_project_abs_toolkit_section(&paths.project_root, normalized_demand)?
+    {
+        protocol_prompt.push_str("\n\n");
+        protocol_prompt.push_str(&section);
+        implementation_prompt.push_str("\n\n");
+        implementation_prompt.push_str(&section);
+        master_prompt.push_str("\n\n");
+        master_prompt.push_str(&section);
+    }
+
     if let Some(section) = build_abstraction_memory_section(&paths.project_root, normalized_demand)?
     {
         protocol_prompt.push_str("\n\n");
@@ -207,6 +222,100 @@ fn build_abstraction_memory_section(
     );
 
     Ok(Some(render_prompt_context(&context)))
+}
+
+fn build_project_abs_toolkit_section(
+    project_root: &Path,
+    demand: &str,
+) -> Result<Option<String>, anyhow::Error> {
+    let triad_paths = WorkspacePaths::new(project_root.to_path_buf());
+    let config = load_triad_config(&triad_paths);
+    let stable_source_paths = collect_stable_source_paths(&config);
+    let project_name = project_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project");
+
+    let artifact = if config.abstraction_memory.enabled
+        && config.abstraction_memory.auto_sync_on_prompt
+        && triad_paths.map_file.exists()
+    {
+        ensure_abstraction_memory(
+            &triad_paths.map_file,
+            &triad_paths.abstraction_memory_file,
+            project_name,
+            &config.abstraction_memory,
+            &stable_source_paths,
+            false,
+        )?;
+        Some(sync_project_abs_toolkit_from_memory(
+            &triad_paths.abstraction_memory_file,
+            &triad_paths.project_abs_toolkit_file,
+            &triad_paths.project_abs_toolkit_markdown_file,
+            &triad_paths.project_abs_toolkit_dir,
+            project_name,
+        )?)
+    } else if triad_paths.project_abs_toolkit_file.exists() {
+        load_project_abs_toolkit(&triad_paths.project_abs_toolkit_file)
+    } else if triad_paths.abstraction_memory_file.exists() {
+        Some(sync_project_abs_toolkit_from_memory(
+            &triad_paths.abstraction_memory_file,
+            &triad_paths.project_abs_toolkit_file,
+            &triad_paths.project_abs_toolkit_markdown_file,
+            &triad_paths.project_abs_toolkit_dir,
+            project_name,
+        )?)
+    } else {
+        None
+    };
+
+    Ok(artifact.map(|artifact| render_project_abs_toolkit_section(&artifact, demand)))
+}
+
+fn render_project_abs_toolkit_section(
+    artifact: &ProjectAbsToolkitArtifact,
+    demand: &str,
+) -> String {
+    let mut lines = vec![
+        "[Project Abstraction Toolkit]".to_string(),
+        format!(
+            "Toolkit contains {} promoted abstractions for project '{}'.",
+            artifact.summary.promoted_entry_count, artifact.project
+        ),
+        "Discipline: search the toolkit first, reuse or adapt an existing abstraction when possible, and justify any new abstraction that bypasses a relevant toolkit entry.".into(),
+    ];
+
+    let matches = search_project_abs_toolkit(artifact, demand, 5);
+    if matches.is_empty() {
+        lines.push(
+            "- No direct toolkit match for this demand. Still review the promoted toolkit before adding a new abstract class or function."
+                .into(),
+        );
+        for entry in artifact.entries.iter().take(3) {
+            lines.push(format!(
+                "  - {} [{}] policy={} @ {}",
+                entry.name,
+                entry.kind.as_str(),
+                entry.reuse_policy.as_str(),
+                entry.primary_source_path
+            ));
+        }
+        return lines.join("\n");
+    }
+
+    lines.push("- Relevant toolkit entries:".into());
+    for result in matches {
+        lines.push(format!(
+            "  - {} [{}] policy={} stability={} @ {}",
+            result.entry.name,
+            result.entry.kind.as_str(),
+            result.entry.reuse_policy.as_str(),
+            result.entry.stability.as_str(),
+            result.entry.primary_source_path
+        ));
+    }
+
+    lines.join("\n")
 }
 
 fn collect_stable_source_paths(config: &crate::config::TriadConfig) -> HashSet<String> {
