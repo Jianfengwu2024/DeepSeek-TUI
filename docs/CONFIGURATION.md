@@ -77,7 +77,39 @@ through unchanged for OpenAI-compatible gateways. `atlascloud` defaults to
 `deepseek-ai/deepseek-v4-flash` as its default model. SGLang, vLLM, and Ollama are
 self-hosted and can run without an API key by default. Ollama defaults to
 `http://localhost:11434/v1` and sends model tags such as `deepseek-coder:1.3b`
-or `qwen2.5-coder:7b` unchanged.
+or `qwen2.5-coder:7b` unchanged. Self-hosted providers and loopback custom
+URLs (`localhost`, `127.0.0.1`, `[::1]`, `0.0.0.0`) do not read the secret store
+unless API-key auth is explicitly requested; use an env var or config-file key
+when a local server does require bearer auth.
+
+### Custom OpenAI-Compatible Gateways
+
+For a third-party service that implements the OpenAI Chat Completions API, use
+the built-in `openai` provider name and point its provider table at the gateway:
+
+```toml
+provider = "openai"
+default_text_model = "your-model-id"
+
+[providers.openai]
+api_key = "YOUR_OPENAI_COMPATIBLE_API_KEY"
+base_url = "https://your-gateway.example/v1"
+```
+
+Do not invent a custom provider name; `provider` must be one of the known
+providers listed above. Put the endpoint under `[providers.openai]`, not the
+legacy top-level `base_url`, so the OpenAI-compatible provider receives it.
+`default_text_model` is the model ID sent to the gateway; if you keep several
+provider tables in one config, `[providers.openai].model` can be used as the
+OpenAI-provider-specific override.
+
+Local HTTP endpoints such as Ollama, SGLang, and vLLM are allowed by default
+when they use localhost or loopback addresses. For a non-local `http://`
+gateway, launch with `DEEPSEEK_ALLOW_INSECURE_HTTP=1` only on a trusted network:
+
+```bash
+DEEPSEEK_ALLOW_INSECURE_HTTP=1 deepseek
+```
 
 Third-party OpenAI-compatible gateways that need extra request headers can set
 `http_headers = { "X-Model-Provider-Id" = "your-model-provider" }` at the top
@@ -295,7 +327,12 @@ replacement compaction. You can inspect or update these from the TUI with
 
 Common settings keys:
 
-- `theme` (default, dark, light, whale)
+- `theme` (`system`, `dark`, `light`, `grayscale`, `catppuccin-mocha`,
+  `tokyo-night`, `dracula`, `gruvbox-dark`; default `system`): `system`
+  follows terminal background detection, `dark`/`light` use the DeepSeek
+  palettes, `grayscale` is the low-opinion black/white theme, and the named
+  community presets apply across the TUI. Aliases such as `whale`, `mono`,
+  `black-white`, `tokyonight`, and `gruvbox` are accepted.
 - `auto_compact` (on/off, default off)
 - `paste_burst_detection` (on/off, default on): fallback rapid-key paste
   detection for terminals that do not emit bracketed-paste events. This is
@@ -316,6 +353,10 @@ Common settings keys:
   context panel, `/cost`, `/tokens`, and long-turn notification summaries. The
   aliases `rmb` and `yuan` normalize to `cny`.
 - `default_mode` (agent, plan, yolo; legacy `normal` is accepted and normalized to `agent`)
+- `sidebar_focus` (`auto`, `work`, `tasks`, `agents`, `context`; default
+  `auto`): selects the right sidebar focus. `auto` prioritizes Work, Tasks,
+  Agents, then optional Context, and uses Work as the single quiet empty state.
+  Legacy `plan` and `todos` values are accepted and normalized to `work`.
 - `max_history` (number of submitted input history entries; cleared drafts are
   also kept locally for composer history search)
 - `default_model` (model name override)
@@ -392,8 +433,8 @@ If you are upgrading from older releases:
 - `managed_config_path` (string, optional): managed config file loaded after user/env config.
 - `requirements_path` (string, optional): requirements file used to enforce allowed approval/sandbox values.
 - `max_subagents` (int, optional): defaults to `10` and is clamped to `1..=20`.
-- `subagents.*` (optional): per-role/type model defaults for `agent_spawn` and
-  related sub-agent tools. Explicit tool `model` values win, then role/type
+- `subagents.*` (optional): per-role/type model defaults for `agent_open` and
+  related persistent sub-agent sessions. Explicit tool `model` values win, then role/type
   overrides, then the parent runtime model. Supported convenience keys are
   `default_model`, `worker_model`, `explorer_model`, `awaiter_model`,
   `review_model`, `custom_model`, and `max_concurrent`. The
@@ -402,7 +443,13 @@ If you are upgrading from older releases:
   keys such as `worker`, `explorer`, `general`, `explore`, `plan`, and
   `review`. Values must normalize to a supported DeepSeek model id before an
   agent is spawned.
-- `skills_dir` (string, optional): defaults to `~/.deepseek/skills` (each skill is a directory containing `SKILL.md`). Workspace-local `.agents/skills` or `./skills` are preferred when present; the runtime also discovers global agentskills.io-compatible `~/.agents/skills` and the broader Claude-ecosystem `~/.claude/skills`.
+- `skills_dir` (string, optional): defaults to `~/.deepseek/skills` (each skill is
+  a directory containing `SKILL.md`). Workspace-local `.agents/skills` or
+  `./skills` are preferred when present; the runtime also discovers global
+  agentskills.io-compatible `~/.agents/skills` and the broader Claude-ecosystem
+  `~/.claude/skills`. First launch installs versioned bundled skills for common
+  workflows including skill creation, delegation, MCP/plugin scaffolding,
+  documents, presentations, spreadsheets, PDFs, and Feishu/Lark.
 - `mcp_config_path` (string, optional): defaults to `~/.deepseek/mcp.json`.
   It is visible in `/config` and can be changed from the TUI. The new path is
   used immediately by `/mcp`, but rebuilding the model-visible MCP tool pool
@@ -684,7 +731,7 @@ configure reasoning effort.
 - `--plugins` — scaffold `~/.deepseek/plugins/` with a `README.md` and an
   `example/PLUGIN.md` placeholder using the same frontmatter shape as
   `SKILL.md`. Plugins are not loaded automatically either; reference them
-  from a skill or MCP wrapper when you want them active.
+  from a skill, hook, or MCP wrapper when you want them active.
 - `--all` now scaffolds MCP + skills + tools + plugins together.
 - `--clean` — list `~/.deepseek/sessions/checkpoints/latest.json` and
   `offline_queue.json` if they exist. Pass `--force` to actually remove them.

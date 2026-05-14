@@ -12,7 +12,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -427,7 +427,6 @@ impl BackgroundShell {
     }
 
     /// Kill the process
-    #[allow(dead_code)]
     fn kill(&mut self) -> Result<()> {
         if let Some(ref mut child) = self.child {
             child.kill().context("Failed to kill process")?;
@@ -602,6 +601,11 @@ impl ShellManager {
     #[allow(dead_code)]
     pub fn is_sandbox_available(&mut self) -> bool {
         self.sandbox_manager.is_available()
+    }
+
+    #[allow(dead_code)]
+    pub fn default_workspace(&self) -> &Path {
+        &self.default_workspace
     }
 
     /// Execute a shell command with the configured sandbox policy.
@@ -1250,7 +1254,6 @@ impl ShellManager {
     }
 
     /// Kill a running background process
-    #[allow(dead_code)]
     pub fn kill(&mut self, task_id: &str) -> Result<ShellResult> {
         let shell = self
             .processes
@@ -1586,6 +1589,7 @@ async fn execute_foreground_via_background(
     command: &str,
     timeout_ms: u64,
     stdin_data: Option<&str>,
+    tty: bool,
     policy_override: Option<ExecutionSandboxPolicy>,
     extra_env: HashMap<String, String>,
 ) -> Result<ShellResult> {
@@ -1602,7 +1606,7 @@ async fn execute_foreground_via_background(
             timeout_ms,
             true,
             stdin_data,
-            false,
+            tty,
             policy_override,
             extra_env,
         )?
@@ -1706,6 +1710,10 @@ impl ToolSpec for ExecShellTool {
                 "tty": {
                     "type": "boolean",
                     "description": "Allocate a pseudo-terminal for interactive programs (implies background)"
+                },
+                "combined_output": {
+                    "type": "boolean",
+                    "description": "Capture stdout and stderr as one chronological PTY stream (default false). In foreground mode, waits for completion; in background mode, implies tty."
                 }
             },
             "required": ["command"]
@@ -1733,7 +1741,8 @@ impl ToolSpec for ExecShellTool {
         let timeout_ms = optional_u64(&input, "timeout_ms", 120_000).min(600_000);
         let background = optional_bool(&input, "background", false);
         let interactive = optional_bool(&input, "interactive", false);
-        let tty = optional_bool(&input, "tty", false);
+        let combined_output = optional_bool(&input, "combined_output", false);
+        let tty = optional_bool(&input, "tty", false) || (combined_output && background);
         let stdin_data = input
             .get("stdin")
             .or_else(|| input.get("input"))
@@ -1746,9 +1755,9 @@ impl ToolSpec for ExecShellTool {
                 "Interactive commands cannot run in background mode.",
             ));
         }
-        if interactive && tty {
+        if interactive && (tty || combined_output) {
             return Ok(ToolResult::error(
-                "Interactive mode cannot be combined with TTY sessions.",
+                "Interactive mode cannot be combined with TTY or combined_output sessions.",
             ));
         }
         if interactive && stdin_data.is_some() {
@@ -1969,6 +1978,7 @@ impl ToolSpec for ExecShellTool {
                 command,
                 timeout_ms,
                 stdin_data.as_deref(),
+                combined_output,
                 policy_override,
                 extra_env,
             )
@@ -2067,6 +2077,7 @@ impl ToolSpec for ExecShellTool {
                     "stderr_summary": stderr_summary,
                     "safety_level": format!("{:?}", safety.level),
                     "interactive": interactive,
+                    "combined_output": combined_output,
                     "canceled": was_cancelled,
                     "execpolicy": execpolicy_decision.as_ref().map(|decision| match decision {
                         ExecPolicyDecision::Allow => json!({
@@ -2460,7 +2471,7 @@ impl ToolSpec for ShellWaitTool {
                 },
                 "timeout_ms": {
                     "type": "integer",
-                    "description": "Timeout in milliseconds (default: 5000)"
+                    "description": "Timeout in milliseconds (default: 30000, max: 600000). Use a higher value for long-running builds, CI watchers, and interactive commands that are expected to keep producing output."
                 },
                 "wait": {
                     "type": "boolean",
@@ -2486,7 +2497,7 @@ impl ToolSpec for ShellWaitTool {
     ) -> Result<ToolResult, ToolError> {
         let task_id = required_task_id(&input)?;
         let wait = optional_bool(&input, "wait", true);
-        let timeout_ms = optional_u64(&input, "timeout_ms", 5_000);
+        let timeout_ms = optional_u64(&input, "timeout_ms", 30_000);
 
         let (delta, wait_canceled) = if wait {
             wait_for_shell_delta_cancellable(context, task_id, timeout_ms).await?

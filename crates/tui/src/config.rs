@@ -418,15 +418,18 @@ pub enum NotificationCondition {
 #[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum NotificationMethod {
-    /// Auto-detect: OSC 9 for iTerm.app / Ghostty / WezTerm; BEL on
-    /// macOS / Linux otherwise; on Windows the fallback is `Off`
-    /// because BEL maps to the system error chime there (#583).
+    /// Auto-detect: picks the best protocol for the current terminal
+    /// (OSC 9, Kitty OSC 99, Ghostty OSC 777, or Bel).
     #[default]
     Auto,
     /// OSC 9 escape.
     Osc9,
     /// Plain BEL character.
     Bel,
+    /// Kitty notification protocol (OSC 99).
+    Kitty,
+    /// Ghostty notification protocol (OSC 777).
+    Ghostty,
     /// Disable notifications.
     Off,
 }
@@ -836,6 +839,18 @@ pub struct SubagentsConfig {
     pub max_concurrent: Option<usize>,
 }
 
+/// `[auto]` table — knobs for the `--model auto` / `/model auto` router.
+///
+/// `cost_saving` (#1207): when `true`, the auto-mode router prefers
+/// `deepseek-v4-flash` for ambiguous requests, only escalating to
+/// `deepseek-v4-pro` when the task clearly benefits from deeper reasoning.
+/// Default is `false` (balanced — match the existing routing voice).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AutoConfig {
+    #[serde(default)]
+    pub cost_saving: Option<bool>,
+}
+
 /// Resolved CLI configuration, including defaults and environment overrides.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
@@ -934,6 +949,10 @@ pub struct Config {
     /// opted in by the user or project.
     #[serde(default)]
     pub triadmind: Option<TriadMindConfig>,
+    /// Tunables for `--model auto` (#1207). When absent, the auto router
+    /// keeps its existing balanced behaviour.
+    #[serde(default)]
+    pub auto: Option<AutoConfig>,
 
     /// Post-edit LSP diagnostics injection (#136). When absent, the engine
     /// applies the defaults documented in [`LspConfigToml`].
@@ -1180,6 +1199,18 @@ struct RequirementsFile {
 // === Config Loading ===
 
 impl Config {
+    /// Return `true` if the `[auto] cost_saving = true` opt-in is set
+    /// (#1207). When true, the auto-mode router biases toward
+    /// `deepseek-v4-flash` for ambiguous requests instead of escalating to
+    /// `deepseek-v4-pro`. Default: `false` (balanced behaviour).
+    #[must_use]
+    pub fn auto_cost_saving(&self) -> bool {
+        self.auto
+            .as_ref()
+            .and_then(|a| a.cost_saving)
+            .unwrap_or(false)
+    }
+
     /// Load configuration from disk and merge with environment overrides.
     ///
     /// # Examples
@@ -1564,6 +1595,10 @@ impl Config {
             && !value.trim().is_empty()
         {
             return Ok(value);
+        }
+
+        if base_url_uses_local_host(&self.deepseek_base_url()) {
+            return Ok(String::new());
         }
 
         match provider {
@@ -2596,6 +2631,29 @@ fn provider_preserves_custom_base_url_model(provider: ApiProvider, base_url: &st
     base_url_is_custom_for_provider(provider, base_url)
 }
 
+fn base_url_uses_local_host(base_url: &str) -> bool {
+    let Some(host) = base_url_host(base_url) else {
+        return false;
+    };
+    let host = host.trim_matches(['[', ']']).to_ascii_lowercase();
+    if matches!(host.as_str(), "localhost" | "0.0.0.0") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .is_ok_and(|addr| addr.is_loopback() || addr.is_unspecified())
+}
+
+fn base_url_host(base_url: &str) -> Option<&str> {
+    let without_scheme = base_url
+        .split_once("://")
+        .map_or(base_url, |(_, rest)| rest);
+    let authority = without_scheme.split('/').next()?.rsplit('@').next()?;
+    if let Some(rest) = authority.strip_prefix('[') {
+        return rest.split_once(']').map(|(host, _)| host);
+    }
+    authority.split(':').next().filter(|host| !host.is_empty())
+}
+
 fn model_for_provider(provider: ApiProvider, normalized: String) -> String {
     let lowered = normalized.to_ascii_lowercase();
     match (provider, lowered.as_str()) {
@@ -2726,6 +2784,7 @@ fn merge_config(base: Config, override_cfg: Config) -> Config {
         snapshots: override_cfg.snapshots.or(base.snapshots),
         search: override_cfg.search.or(base.search),
         memory: override_cfg.memory.or(base.memory),
+        auto: override_cfg.auto.or(base.auto),
         triadmind: merge_triadmind(base.triadmind, override_cfg.triadmind),
         lsp: override_cfg.lsp.or(base.lsp),
         context: ContextConfig {
@@ -3254,6 +3313,10 @@ pub fn has_api_key_for(config: &Config, provider: ApiProvider) -> bool {
         provider,
         ApiProvider::Sglang | ApiProvider::Vllm | ApiProvider::Ollama
     ) {
+        return true;
+    }
+
+    if provider == config.api_provider() && base_url_uses_local_host(&config.deepseek_base_url()) {
         return true;
     }
 
@@ -4589,6 +4652,20 @@ api_key = "old-openrouter-key"
 
         assert_eq!(config.api_provider(), ApiProvider::Deepseek);
         assert_eq!(config.deepseek_base_url(), "https://api.deepseek.com");
+    }
+
+    #[test]
+    fn loopback_deepseek_base_url_runs_without_api_key() -> Result<()> {
+        let _lock = lock_test_env();
+        let config = Config {
+            base_url: Some("http://127.0.0.1:8000/v1".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(config.api_provider(), ApiProvider::Deepseek);
+        assert!(has_api_key(&config));
+        assert_eq!(config.deepseek_api_key()?, "");
+        Ok(())
     }
 
     #[test]

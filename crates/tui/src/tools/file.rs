@@ -6,7 +6,7 @@
 use super::diff_format::make_unified_diff;
 use super::spec::{
     ApprovalRequirement, ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec,
-    lsp_diagnostics_for_paths, optional_str, required_str,
+    lsp_diagnostics_for_paths, optional_bool, optional_str, required_str,
 };
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -473,7 +473,7 @@ impl ToolSpec for EditFileTool {
     }
 
     fn description(&self) -> &'static str {
-        "Replace text in a single file via exact search/replace. Use this instead of `sed -i` in `exec_shell` for in-place edits. For multi-hunk or cross-file changes, use `apply_patch` instead. Required: 'path', 'search' (exact text to find), 'replace' (text to substitute)."
+        "Replace text in a single file via exact search/replace. Use this instead of `sed -i` in `exec_shell` for one unambiguous in-place edit. `search` matches exactly by default, including whitespace and indentation; set `fuzz: true` to tolerate leading-indentation differences. Returns a compact unified diff, not the full file. For structural, multi-block, or cross-file changes, use `apply_patch` or `write_file` instead."
     }
 
     fn input_schema(&self) -> Value {
@@ -486,11 +486,15 @@ impl ToolSpec for EditFileTool {
                 },
                 "search": {
                     "type": "string",
-                    "description": "Text to search for"
+                    "description": "Exact text to search for, including whitespace, indentation, and newlines"
                 },
                 "replace": {
                     "type": "string",
                     "description": "Text to replace with"
+                },
+                "fuzz": {
+                    "type": "boolean",
+                    "description": "When true, tolerate leading whitespace differences on each searched line (default false)"
                 }
             },
             "required": ["path", "search", "replace"]
@@ -513,6 +517,7 @@ impl ToolSpec for EditFileTool {
         let path_str = required_str(&input, "path")?;
         let search = required_str(&input, "search")?;
         let replace = required_str(&input, "replace")?;
+        let fuzz = optional_bool(&input, "fuzz", false);
 
         if search == replace {
             return Err(ToolError::invalid_input(
@@ -527,14 +532,59 @@ impl ToolSpec for EditFileTool {
         })?;
 
         let count = contents.matches(search).count();
-        if count == 0 {
+        let (updated, count, fuzz_kind) = if count == 0 && fuzz {
+            // First fallback: tolerate indentation differences.
+            let indent_matches = leading_whitespace_fuzzy_matches(&contents, search);
+            match indent_matches.as_slice() {
+                [(start, end)] => {
+                    let mut updated = contents.clone();
+                    updated.replace_range(*start..*end, replace);
+                    (updated, 1, Some("indentation"))
+                }
+                [] => {
+                    // Second fallback: tolerate typographic-punctuation
+                    // drift (smart quotes, em-dashes, NBSP). Picks up the
+                    // copy-paste failure mode where a browser/chat client
+                    // silently substituted Unicode punctuation in for the
+                    // ASCII the file actually contains.
+                    let punct_matches = punctuation_normalized_matches(&contents, search);
+                    match punct_matches.as_slice() {
+                        [] => {
+                            return Err(ToolError::execution_failed(format!(
+                                "Search string not found in {}",
+                                file_path.display()
+                            )));
+                        }
+                        [(start, end)] => {
+                            let mut updated = contents.clone();
+                            updated.replace_range(*start..*end, replace);
+                            (updated, 1, Some("punctuation"))
+                        }
+                        _ => {
+                            return Err(ToolError::execution_failed(format!(
+                                "Fuzzy punctuation search matched {} locations in {}; refine search text",
+                                punct_matches.len(),
+                                file_path.display()
+                            )));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(ToolError::execution_failed(format!(
+                        "Fuzzy search matched {} locations in {}; refine search text",
+                        indent_matches.len(),
+                        file_path.display()
+                    )));
+                }
+            }
+        } else if count == 0 {
             return Err(ToolError::execution_failed(format!(
                 "Search string not found in {}",
                 file_path.display()
             )));
-        }
-
-        let updated = contents.replace(search, replace);
+        } else {
+            (contents.replace(search, replace), count, None)
+        };
 
         fs::write(&file_path, &updated).map_err(|e| {
             ToolError::execution_failed(format!("Failed to write {}: {}", file_path.display(), e))
@@ -542,7 +592,23 @@ impl ToolSpec for EditFileTool {
 
         let display = file_path.display().to_string();
         let diff = make_unified_diff(&display, &contents, &updated);
-        let summary = format!("Replaced {count} occurrence(s) in {display}");
+        let summary = if count > 1 {
+            format!(
+                "Replaced {count} occurrence(s) in {display}\n\
+                 Warning: multiple matches were replaced with the same substitution. \
+                 Verify the result with read_file before proceeding."
+            )
+        } else {
+            let fuzz_note = match fuzz_kind {
+                Some("indentation") => " (fuzzy indentation match)",
+                Some("punctuation") => {
+                    " (fuzzy punctuation match — typographic quotes/dashes normalized)"
+                }
+                Some(other) => other,
+                None => "",
+            };
+            format!("Replaced 1 occurrence in {display}{fuzz_note}")
+        };
         let body = if diff.is_empty() {
             format!("{summary}\n(no textual changes)")
         } else {
@@ -559,6 +625,114 @@ impl ToolSpec for EditFileTool {
 
         Ok(ToolResult::success(full_body))
     }
+}
+
+fn strip_line_leading_whitespace_with_map(input: &str) -> (String, Vec<usize>) {
+    let mut normalized = String::with_capacity(input.len());
+    let mut byte_map = Vec::with_capacity(input.len());
+    let mut at_line_start = true;
+    for (idx, ch) in input.char_indices() {
+        if at_line_start && matches!(ch, ' ' | '\t') {
+            continue;
+        }
+        normalized.push(ch);
+        for _ in 0..ch.len_utf8() {
+            byte_map.push(idx);
+        }
+        at_line_start = ch == '\n';
+    }
+    (normalized, byte_map)
+}
+
+fn line_start_before(input: &str, idx: usize) -> usize {
+    input[..idx]
+        .rfind('\n')
+        .map_or(0, |newline| newline.saturating_add(1))
+}
+
+fn leading_whitespace_fuzzy_matches(contents: &str, search: &str) -> Vec<(usize, usize)> {
+    let (normalized_contents, byte_map) = strip_line_leading_whitespace_with_map(contents);
+    let (normalized_search, _) = strip_line_leading_whitespace_with_map(search);
+    if normalized_search.is_empty() {
+        return Vec::new();
+    }
+
+    let mut matches = Vec::new();
+    let mut cursor = 0;
+    while let Some(rel_idx) = normalized_contents[cursor..].find(&normalized_search) {
+        let norm_start = cursor + rel_idx;
+        let norm_end = norm_start + normalized_search.len();
+        let Some(&mapped_start) = byte_map.get(norm_start) else {
+            break;
+        };
+        let original_start = line_start_before(contents, mapped_start);
+        let original_end = byte_map.get(norm_end).copied().unwrap_or(contents.len());
+        matches.push((original_start, original_end));
+        cursor = norm_start.saturating_add(1);
+    }
+    matches
+}
+
+/// Normalize typographic punctuation to its ASCII counterpart:
+///
+/// * `"` `"` / U+201C U+201D → `"`
+/// * `'` `'` / U+2018 U+2019 → `'`
+/// * `–` `—` / U+2013 U+2014 → `-`
+/// * U+00A0 (non-breaking space) → ASCII space
+///
+/// Returns the normalized string plus a byte-map sized to
+/// `normalized.len()` whose i-th entry is the original byte offset of
+/// the character that produced normalized byte i. Used to recover the
+/// original-byte range after finding a match in normalized space.
+fn punctuation_normalized_with_map(input: &str) -> (String, Vec<usize>) {
+    let mut normalized = String::with_capacity(input.len());
+    let mut byte_map = Vec::with_capacity(input.len());
+    for (idx, ch) in input.char_indices() {
+        let replacement: Option<char> = match ch {
+            '\u{201C}' | '\u{201D}' => Some('"'),
+            '\u{2018}' | '\u{2019}' => Some('\''),
+            '\u{2013}' | '\u{2014}' => Some('-'),
+            '\u{00A0}' => Some(' '),
+            _ => None,
+        };
+        let written = replacement.unwrap_or(ch);
+        normalized.push(written);
+        for _ in 0..written.len_utf8() {
+            byte_map.push(idx);
+        }
+    }
+    (normalized, byte_map)
+}
+
+/// Try to find `search` inside `contents` after normalizing typographic
+/// punctuation in both. Catches the copy-paste failure mode where a
+/// browser, word processor, or chat client silently converted ASCII
+/// quotes/dashes to their Unicode "pretty" forms.
+fn punctuation_normalized_matches(contents: &str, search: &str) -> Vec<(usize, usize)> {
+    let (norm_contents, byte_map) = punctuation_normalized_with_map(contents);
+    let (norm_search, _) = punctuation_normalized_with_map(search);
+    if norm_search.is_empty() {
+        return Vec::new();
+    }
+    // If normalization didn't change anything, the exact-match pass
+    // already considered this case — skip to avoid double-reporting.
+    if norm_contents == contents && norm_search == search {
+        return Vec::new();
+    }
+
+    let mut matches = Vec::new();
+    let mut cursor = 0;
+    while let Some(rel_idx) = norm_contents[cursor..].find(&norm_search) {
+        let norm_start = cursor + rel_idx;
+        let norm_end = norm_start + norm_search.len();
+        let Some(&original_start) = byte_map.get(norm_start) else {
+            break;
+        };
+        let original_end = byte_map.get(norm_end).copied().unwrap_or(contents.len());
+        matches.push((original_start, original_end));
+        cursor = norm_start.saturating_add(1);
+    }
+    matches
 }
 
 // === ListDirTool ===
@@ -1023,7 +1197,7 @@ mod tests {
         // Two concerns in one test: with `prefer_external_pdftotext = true`
         // the dispatch must (a) call pdftotext when present, and (b) return
         // the structured `binary_unavailable` response when pdftotext is
-        // missing — both branches were covered by the pre-v0.8.32 default.
+        // missing.
         // Sync test (calls `read_pdf` directly, not the async ReadFileTool
         // wrapper) so the env-var lock is never held across an `.await`.
         let _lock = DS_CONFIG_PATH_LOCK.lock().unwrap();
@@ -1151,6 +1325,11 @@ mod tests {
 
         assert!(result.success);
         assert!(result.content.contains("2 occurrence(s)"));
+        assert!(
+            result.content.contains("multiple matches were replaced"),
+            "{}",
+            result.content
+        );
         // Inline diff (#505) — the unified diff lands above the summary
         // line so the TUI's diff-aware renderer kicks in.
         assert!(result.content.contains("--- a/"), "{}", result.content);
@@ -1168,6 +1347,129 @@ mod tests {
         // Verify edit was applied
         let edited = fs::read_to_string(&test_file).expect("read");
         assert_eq!(edited, "hi world hi");
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_single_match_has_no_multi_match_warning() {
+        let tmp = tempdir().expect("tempdir");
+        let ctx = ToolContext::new(tmp.path().to_path_buf());
+
+        let test_file = tmp.path().join("single.txt");
+        fs::write(&test_file, "hello world").expect("write");
+
+        let tool = EditFileTool;
+        let result = tool
+            .execute(
+                json!({"path": "single.txt", "search": "hello", "replace": "hi"}),
+                &ctx,
+            )
+            .await
+            .expect("execute");
+
+        assert!(result.success);
+        assert!(result.content.contains("Replaced 1 occurrence"));
+        assert!(!result.content.contains("multiple matches were replaced"));
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_fuzz_tolerates_leading_whitespace() {
+        let tmp = tempdir().expect("tempdir");
+        let ctx = ToolContext::new(tmp.path().to_path_buf());
+
+        let test_file = tmp.path().join("fuzzy.txt");
+        fs::write(
+            &test_file,
+            "fn main() {\n    if true {\n        let value = 1;\n    }\n}\n",
+        )
+        .expect("write");
+
+        let tool = EditFileTool;
+        let result = tool
+            .execute(
+                json!({
+                    "path": "fuzzy.txt",
+                    "search": "if true {\n    let value = 1;\n}",
+                    "replace": "    if true {\n        let value = 2;\n    }",
+                    "fuzz": true
+                }),
+                &ctx,
+            )
+            .await
+            .expect("execute");
+
+        assert!(result.success);
+        assert!(result.content.contains("fuzzy indentation match"));
+        let edited = fs::read_to_string(&test_file).expect("read");
+        assert_eq!(
+            edited,
+            "fn main() {\n    if true {\n        let value = 2;\n    }\n}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_fuzz_tolerates_smart_quote_substitution() {
+        // The file on disk has ASCII quotes. The search comes from a
+        // browser paste with curly quotes. Exact match fails; the
+        // punctuation-normalized fallback should still land the edit.
+        let tmp = tempdir().expect("tempdir");
+        let ctx = ToolContext::new(tmp.path().to_path_buf());
+
+        let test_file = tmp.path().join("smart.rs");
+        fs::write(&test_file, "let s = \"hello world\";\n").expect("write");
+
+        let tool = EditFileTool;
+        let result = tool
+            .execute(
+                json!({
+                    "path": "smart.rs",
+                    // \u{201C} \u{201D} are the curly double-quote pair.
+                    "search": "let s = \u{201C}hello world\u{201D};",
+                    "replace": "let s = \"hello universe\";",
+                    "fuzz": true
+                }),
+                &ctx,
+            )
+            .await
+            .expect("execute");
+
+        assert!(result.success, "fuzzy punctuation edit should succeed");
+        assert!(
+            result.content.contains("fuzzy punctuation match"),
+            "expected punctuation-fuzz note, got: {}",
+            result.content
+        );
+        let edited = fs::read_to_string(&test_file).expect("read");
+        assert_eq!(edited, "let s = \"hello universe\";\n");
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_fuzz_tolerates_em_dash_and_nbsp() {
+        let tmp = tempdir().expect("tempdir");
+        let ctx = ToolContext::new(tmp.path().to_path_buf());
+
+        let test_file = tmp.path().join("dash.md");
+        // File has an ASCII hyphen and ASCII space.
+        fs::write(&test_file, "alpha - beta\n").expect("write");
+
+        let tool = EditFileTool;
+        let result = tool
+            .execute(
+                json!({
+                    "path": "dash.md",
+                    // Search uses em-dash + NBSP, common after a copy-paste
+                    // from a styled document.
+                    "search": "alpha\u{00A0}\u{2014}\u{00A0}beta",
+                    "replace": "alpha - gamma",
+                    "fuzz": true
+                }),
+                &ctx,
+            )
+            .await
+            .expect("execute");
+
+        assert!(result.success);
+        let edited = fs::read_to_string(&test_file).expect("read");
+        assert_eq!(edited, "alpha - gamma\n");
     }
 
     #[tokio::test]
@@ -1320,6 +1622,8 @@ mod tests {
         assert!(!tool.is_read_only());
         assert!(tool.is_sandboxable());
         assert_eq!(tool.approval_requirement(), ApprovalRequirement::Suggest);
+        assert!(tool.description().contains("exact search/replace"));
+        assert!(tool.description().contains("structural"));
     }
 
     #[test]
@@ -1363,6 +1667,11 @@ mod tests {
             .and_then(|value| value.as_array())
             .expect("edit schema should include required array");
         assert_eq!(required.len(), 3);
+        let search_desc = edit_schema["properties"]["search"]["description"]
+            .as_str()
+            .expect("search description");
+        assert!(search_desc.contains("Exact text"));
+        assert!(search_desc.contains("whitespace"));
 
         let list_schema = ListDirTool.input_schema();
         let required = list_schema

@@ -1,6 +1,6 @@
 //! `image_analyze` tool — analyze images using a dedicated vision model.
 
-use std::path::Path;
+use std::path::{Component, Path};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -109,11 +109,12 @@ impl ToolSpec for ImageAnalyzeTool {
             .unwrap_or("Describe this image in detail.");
 
         let image_path_buf = Path::new(image_path);
-        if image_path_buf.is_absolute()
-            || image_path_buf
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
+        if image_path_buf.components().any(|c| {
+            matches!(
+                c,
+                Component::Prefix(_) | Component::RootDir | Component::ParentDir
+            )
+        }) {
             return Err(ToolError::execution_failed(
                 "image_path must be a relative path within the workspace and cannot escape it.",
             ));
@@ -269,8 +270,13 @@ mod tests {
         let tmp = tempdir().expect("tempdir");
         let ctx = ToolContext::new(tmp.path().to_path_buf());
         let tool = ImageAnalyzeTool::new(fake_config());
+        let outside_workspace = if cfg!(windows) {
+            r"C:\Windows\System32\drivers\etc\hosts"
+        } else {
+            "/etc/hosts"
+        };
         let err = tool
-            .execute(json!({"image_path": "/etc/hosts"}), &ctx)
+            .execute(json!({"image_path": outside_workspace}), &ctx)
             .await
             .expect_err("absolute path must reject");
         assert!(
