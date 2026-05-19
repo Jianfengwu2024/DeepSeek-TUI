@@ -65,6 +65,7 @@ pub(super) fn should_default_defer_tool(name: &str, mode: AppMode) -> bool {
             | "handle_read"
             | "recall_archive"
             | "notify"
+            | "write_file"
             | MULTI_TOOL_PARALLEL_NAME
             | "update_plan"
             | "checklist_write"
