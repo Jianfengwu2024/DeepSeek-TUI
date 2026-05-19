@@ -6,7 +6,8 @@ use std::time::Duration;
 use super::CommandResult;
 use crate::client::DeepSeekClient;
 use crate::config::{
-    COMMON_DEEPSEEK_MODELS, Config, TriadMindMode, clear_api_key, normalize_model_name,
+    COMMON_DEEPSEEK_MODELS, Config, TriadMindMode, clear_api_key,
+    normalize_model_name_for_provider,
 };
 use crate::config_ui::{ConfigUiMode, parse_mode};
 use crate::llm_client::LlmClient;
@@ -459,7 +460,7 @@ pub fn set_config_value(app: &mut App, key: &str, value: &str, persist: bool) ->
             // Clear auto mode when a specific model is set
             app.auto_model = false;
             app.last_effective_model = None;
-            let Some(model) = normalize_model_name(value) else {
+            let Some(model) = normalize_model_name_for_provider(app.api_provider, value) else {
                 return CommandResult::error(format!(
                     "Invalid model '{value}'. Expected a DeepSeek model ID. Common models: {}",
                     COMMON_DEEPSEEK_MODELS.join(", ")

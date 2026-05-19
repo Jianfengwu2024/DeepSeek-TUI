@@ -167,9 +167,9 @@ pub struct EngineConfig {
     pub triadmind_mode: TriadMindMode,
     /// Workshop / large-tool-output routing (#548). `None` disables routing.
     pub workshop: Option<crate::tools::large_output_router::WorkshopConfig>,
-    /// Which search backend `web_search` should use. Default: DuckDuckGo.
+    /// Which search backend `web_search` should use. Default: Bing.
     pub search_provider: crate::config::SearchProvider,
-    /// API key for Tavily or Bocha. `None` for DuckDuckGo.
+    /// API key for Tavily or Bocha. `None` for Bing or DuckDuckGo.
     pub search_api_key: Option<String>,
 }
 
@@ -749,6 +749,7 @@ impl Engine {
                     session_id,
                     messages,
                     system_prompt,
+                    system_prompt_override,
                     model,
                     workspace,
                 } => {
@@ -761,6 +762,8 @@ impl Engine {
                     self.session.compaction_summary_prompt =
                         extract_compaction_summary_prompt(system_prompt.clone());
                     self.session.system_prompt = system_prompt;
+                    self.session.system_prompt_override =
+                        system_prompt_override && self.session.system_prompt.is_some();
                     self.session.auto_model = model.trim().eq_ignore_ascii_case("auto");
                     self.session.model = model;
                     self.session.workspace = workspace.clone();
@@ -1811,6 +1814,10 @@ impl Engine {
         let stable_prompt =
             merge_system_prompts(Some(&base), self.session.compaction_summary_prompt.clone());
         let stable_hash = system_prompt_hash(stable_prompt.as_ref());
+        if self.session.system_prompt_override {
+            self.session.last_system_prompt_hash = Some(stable_hash);
+            return;
+        }
         if self.session.last_system_prompt_hash != Some(stable_hash) {
             self.session.system_prompt = stable_prompt;
             self.session.last_system_prompt_hash = Some(stable_hash);

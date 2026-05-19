@@ -217,7 +217,7 @@ pub struct Settings {
     pub default_mode: String,
     /// Sidebar width as percentage of terminal width
     pub sidebar_width_percent: u16,
-    /// Sidebar focus mode: auto, work, tasks, agents, context
+    /// Sidebar focus mode: auto, work, tasks, agents, context, hidden
     pub sidebar_focus: String,
     /// Enable the session-context panel (#504). Shows working set, tokens,
     /// cost, MCP/LSP status, cycle count, and memory info.
@@ -411,6 +411,7 @@ impl Settings {
             self.fancy_animations = false;
         }
 
+
         // Tabby on Windows has reported width-accounting drift with the
         // header whale chip (`🐳` / `🐋`) that can skew the full frame by a
         // column. Treat it as a compatibility terminal: drop to the calmer
@@ -422,6 +423,16 @@ impl Settings {
             if self.status_indicator.eq_ignore_ascii_case("whale") {
                 self.status_indicator = "off".to_string();
             }
+        }
+
+        
+        // Plain Windows PowerShell / cmd.exe under legacy ConHost exposes none
+        // of the modern terminal markers below. Keep rendering calmer there:
+        // lower the motion rate, disable animated chrome, and avoid DEC 2026
+        // synchronized-output wrapping unless the user explicitly forced it on.
+        if detected_legacy_windows_console_host() {
+            self.low_motion = true;
+            self.fancy_animations = false;
             if self.synchronized_output.eq_ignore_ascii_case("auto") {
                 self.synchronized_output = "off".to_string();
             }
@@ -601,9 +612,10 @@ impl Settings {
                     "tasks" => "tasks",
                     "agents" | "subagents" | "sub-agents" => "agents",
                     "context" | "session" => "context",
+                    "hidden" | "hide" | "closed" | "off" | "none" => "hidden",
                     _ => {
                         anyhow::bail!(
-                            "Failed to update setting: invalid sidebar focus '{value}'. Expected: auto, work, tasks, agents, context."
+                            "Failed to update setting: invalid sidebar focus '{value}'. Expected: auto, work, tasks, agents, context, hidden."
                         )
                     }
                 };
@@ -784,7 +796,7 @@ impl Settings {
             ("sidebar_width", "Sidebar width percentage: 10-50"),
             (
                 "sidebar_focus",
-                "Sidebar focus: auto, work, tasks, agents, context",
+                "Sidebar focus: auto, work, tasks, agents, context, hidden",
             ),
             (
                 "context_panel",
@@ -922,6 +934,7 @@ pub fn detected_ptyxis_terminal() -> bool {
     matches!(std::env::var("PTYXIS_VERSION"), Ok(v) if !v.trim().is_empty())
 }
 
+
 /// Returns `true` when the active terminal is Tabby. We match
 /// `TERM_PROGRAM` case-insensitively and keep the heuristic narrow on
 /// purpose: the compatibility downgrade is only needed for terminals whose
@@ -931,6 +944,32 @@ pub fn detected_tabby_terminal() -> bool {
         return program.trim().to_ascii_lowercase().contains("tabby");
     }
     false
+}
+
+
+/// Returns `true` for the unmarked Windows console-host path used by plain
+/// PowerShell / cmd.exe. Modern Windows terminals set at least one marker that
+/// lets us keep the richer rendering path.
+pub fn detected_legacy_windows_console_host() -> bool {
+    cfg!(windows)
+        && legacy_windows_console_host_env([
+            std::env::var_os("WT_SESSION").as_deref(),
+            std::env::var_os("ConEmuPID").as_deref(),
+            std::env::var_os("TERM_PROGRAM").as_deref(),
+            std::env::var_os("WEZTERM_EXECUTABLE").as_deref(),
+            std::env::var_os("WEZTERM_PANE").as_deref(),
+            std::env::var_os("ALACRITTY_WINDOW_ID").as_deref(),
+            std::env::var_os("ANSICON").as_deref(),
+            std::env::var_os("TERM").as_deref(),
+        ])
+}
+
+fn legacy_windows_console_host_env(markers: [Option<&std::ffi::OsStr>; 8]) -> bool {
+    fn has_value(value: Option<&std::ffi::OsStr>) -> bool {
+        value.is_some_and(|v| !v.is_empty())
+    }
+
+    markers.into_iter().all(|value| !has_value(value))
 }
 
 fn normalize_optional_background_color(value: Option<&str>) -> Option<String> {
@@ -961,6 +1000,7 @@ fn normalize_sidebar_focus(value: &str) -> &str {
         "tasks" => "tasks",
         "agents" | "subagents" | "sub-agents" => "agents",
         "context" | "session" => "context",
+        "hidden" | "hide" | "closed" | "off" | "none" => "hidden",
         _ => "auto",
     }
 }
@@ -1119,6 +1159,12 @@ mod tests {
         settings.set("focus", "context").expect("context focus");
         assert_eq!(settings.sidebar_focus, "context");
 
+        settings.set("focus", "hidden").expect("hidden focus");
+        assert_eq!(settings.sidebar_focus, "hidden");
+
+        settings.set("focus", "off").expect("off alias");
+        assert_eq!(settings.sidebar_focus, "hidden");
+
         let err = settings
             .set("sidebar_focus", "classic")
             .expect_err("classic is not a supported public focus");
@@ -1219,6 +1265,14 @@ mod tests {
     #[test]
     fn no_animations_env_recognises_truthy_spellings_only() {
         let _g = no_animations_test_guard();
+        let prev_wt_session = std::env::var_os("WT_SESSION");
+        // The test is about NO_ANIMATIONS only. On Windows CI, an unmarked
+        // console host now independently enables low_motion, so mark the host
+        // as non-legacy while checking falsy spellings.
+        #[cfg(windows)]
+        unsafe {
+            std::env::set_var("WT_SESSION", "test");
+        }
         for truthy in ["1", "true", "True", "YES", "on"] {
             // SAFETY: serialised by the guard.
             unsafe {
@@ -1240,6 +1294,10 @@ mod tests {
         // SAFETY: cleanup under the guard.
         unsafe {
             std::env::remove_var("NO_ANIMATIONS");
+            match prev_wt_session {
+                Some(v) => std::env::set_var("WT_SESSION", v),
+                None => std::env::remove_var("WT_SESSION"),
+            }
         }
     }
 
@@ -1496,6 +1554,93 @@ mod tests {
             match prev {
                 Some(v) => std::env::set_var("TERM_PROGRAM", v),
                 None => std::env::remove_var("TERM_PROGRAM"),
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_windows_console_host_detects_unmarked_shell() {
+        assert!(legacy_windows_console_host_env([
+            None, None, None, None, None, None, None, None
+        ]));
+    }
+
+    #[test]
+    fn legacy_windows_console_host_excludes_modern_terminal_markers() {
+        use std::ffi::OsStr;
+
+        let marker = Some(OsStr::new("1"));
+        assert!(!legacy_windows_console_host_env([
+            marker, None, None, None, None, None, None, None
+        ]));
+        assert!(!legacy_windows_console_host_env([
+            None, marker, None, None, None, None, None, None
+        ]));
+        assert!(!legacy_windows_console_host_env([
+            None, None, marker, None, None, None, None, None
+        ]));
+        assert!(!legacy_windows_console_host_env([
+            None, None, None, marker, None, None, None, None
+        ]));
+        assert!(!legacy_windows_console_host_env([
+            None, None, None, None, marker, None, None, None
+        ]));
+        assert!(!legacy_windows_console_host_env([
+            None, None, None, None, None, marker, None, None
+        ]));
+        assert!(!legacy_windows_console_host_env([
+            None, None, None, None, None, None, marker, None
+        ]));
+        assert!(!legacy_windows_console_host_env([
+            None, None, None, None, None, None, None, marker
+        ]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unmarked_windows_console_forces_calm_rendering() {
+        let _g = term_program_test_guard();
+        let vars = [
+            "WT_SESSION",
+            "ConEmuPID",
+            "TERM_PROGRAM",
+            "WEZTERM_EXECUTABLE",
+            "WEZTERM_PANE",
+            "ALACRITTY_WINDOW_ID",
+            "ANSICON",
+            "TERM",
+            "SSH_CLIENT",
+            "SSH_TTY",
+            "NO_ANIMATIONS",
+            "PTYXIS_VERSION",
+        ];
+        let prev: Vec<_> = vars
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect();
+
+        // SAFETY: serialised by the guard.
+        unsafe {
+            for name in vars {
+                std::env::remove_var(name);
+            }
+        }
+
+        let mut settings = Settings::default();
+        assert!(!settings.low_motion, "default is animated");
+        assert_eq!(settings.synchronized_output, "auto");
+        settings.apply_env_overrides();
+        assert!(settings.low_motion);
+        assert!(!settings.fancy_animations);
+        assert_eq!(settings.synchronized_output, "off");
+
+        // SAFETY: cleanup under the guard.
+        unsafe {
+            for (name, value) in prev {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
             }
         }
     }
