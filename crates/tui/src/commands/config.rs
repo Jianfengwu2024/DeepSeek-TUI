@@ -1,5 +1,3 @@
-//! Config commands: config, settings, mode switches, trust, logout
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
